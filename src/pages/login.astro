@@ -1,0 +1,88 @@
+---
+import { getAuthSheets, SPREADSHEET_ID } from '../lib/sheets';
+
+let error = null;
+
+if (Astro.request.method === "POST") {
+    try {
+        const data = await Astro.request.formData();
+        const email = data.get('email').toLowerCase().trim();
+        const password = data.get('password').trim();
+
+        const sheets = await getAuthSheets();
+        // Lê a aba USUARIOS
+        const response = await sheets.spreadsheets.values.get({
+            spreadsheetId: SPREADSHEET_ID,
+            range: `'USUARIOS'!A2:D100`, 
+        });
+
+        const users = response.data.values || [];
+        
+        // Procura o usuário (Coluna A=Email, B=Senha, D=Status)
+        const user = users.find(u => u[0]?.toLowerCase() === email && u[1] === password);
+
+        if (user) {
+            if (user[3]?.toLowerCase() === 'ativo') {
+                // SUCESSO: Cria o cookie (O Crachá)
+                Astro.cookies.set('nicopel_session', JSON.stringify({ nome: user[2], email: user[0] }), {
+                    path: '/',
+                    maxAge: 60 * 60 * 24 * 7 // Dura 7 dias
+                });
+                return Astro.redirect('/');
+            } else {
+                error = "Sua conta está pendente. Aguarde aprovação do Admin.";
+            }
+        } else {
+            error = "E-mail ou senha incorretos.";
+        }
+    } catch (e) {
+        error = "Erro ao conectar: " + e.message;
+    }
+}
+---
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Nicopel</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 h-screen flex items-center justify-center p-4">
+    <div class="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
+        <div class="text-center mb-8">
+            <h1 class="text-3xl font-bold text-slate-800 tracking-wider">NICOPEL</h1>
+            <p class="text-sm text-gray-500 mt-1">Sistema de Controle de Leads</p>
+        </div>
+
+        {error && (
+            <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4 text-sm">
+                {error}
+            </div>
+        )}
+
+        <form method="POST" class="space-y-6">
+            <div>
+                <label class="block text-sm font-bold text-gray-700 mb-2">E-mail</label>
+                <input type="email" name="email" required 
+                    class="w-full border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-600 outline-none">
+            </div>
+            
+            <div>
+                <label class="block text-sm font-bold text-gray-700 mb-2">Senha</label>
+                <input type="password" name="password" required 
+                    class="w-full border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-600 outline-none">
+            </div>
+
+            <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg transition shadow-lg">
+                ENTRAR NO SISTEMA
+            </button>
+        </form>
+        
+        <div class="mt-6 text-center">
+            <a href="/cadastro" class="text-sm text-blue-600 hover:underline">Não tem acesso? Solicite aqui.</a>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,123 @@
+---
+// src/layouts/Layout.astro
+const { title } = Astro.props;
+
+// Tenta pegar o nome do usuário do cookie
+let userName = 'Admin';
+if (Astro.cookies.has('nicopel_session')) {
+    try {
+        const session = JSON.parse(Astro.cookies.get('nicopel_session').value);
+        userName = session.nome || 'Admin';
+    } catch (e) {}
+}
+---
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>{title} - Nicopel Mobile</title>
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Estilo para esconder a barra de rolagem, mas manter a função */
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans flex h-screen overflow-hidden text-gray-800">
+
+    <div id="mobile-overlay" class="fixed inset-0 bg-black/50 z-30 hidden transition-opacity lg:hidden"></div>
+
+    <aside id="sidebar" class="fixed inset-y-0 left-0 w-72 bg-slate-900 text-white flex flex-col justify-between z-40 transform -translate-x-full transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-auto shadow-2xl lg:shadow-none">
+        
+        <div class="flex-1 overflow-y-auto scrollbar-hide">
+            <div class="h-20 flex items-center justify-between px-6 border-b border-slate-800 bg-slate-950">
+                <div class="flex flex-col">
+                    <h1 class="text-2xl font-bold tracking-wider text-white leading-none">NICOPEL</h1>
+                    <span class="text-[10px] text-slate-400 uppercase tracking-[0.3em] mt-1">Embalagens</span>
+                </div>
+                <button id="close-sidebar" class="lg:hidden text-slate-400 hover:text-white p-1">
+                    <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            
+            <nav class="mt-6 px-4 space-y-3">
+                <a href="/" class="flex items-center gap-4 px-4 py-4 rounded-xl hover:bg-slate-800 transition text-gray-300 hover:text-white group active:bg-slate-800">
+                    <span class="text-2xl group-hover:scale-110 transition">📊</span> 
+                    <span class="font-medium text-base">Dashboard</span>
+                </a>
+                <a href="/adicionar" class="flex items-center gap-4 px-4 py-4 rounded-xl hover:bg-slate-800 transition text-gray-300 hover:text-white group active:bg-slate-800">
+                    <span class="text-2xl group-hover:scale-110 transition">➕</span> 
+                    <span class="font-medium text-base">Adicionar Lead</span>
+                </a>
+                <a href="/editar" class="flex items-center gap-4 px-4 py-4 rounded-xl hover:bg-slate-800 transition text-gray-300 hover:text-white group active:bg-slate-800">
+                    <span class="text-2xl group-hover:scale-110 transition">✏️</span> 
+                    <span class="font-medium text-base">Editar Lead</span>
+                </a>
+                <a href="/relatorio" class="flex items-center gap-4 px-4 py-4 rounded-xl hover:bg-slate-800 transition text-gray-300 hover:text-white group active:bg-slate-800">
+                    <span class="text-2xl group-hover:scale-110 transition">📑</span> 
+                    <span class="font-medium text-base">Relatórios</span>
+                </a>
+            </nav>
+        </div>
+        
+        <div class="p-4 border-t border-slate-800 bg-slate-950">
+            <div class="bg-slate-800 rounded-lg p-4 mb-3 flex items-center gap-3 shadow-inner">
+                <div class="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-xl">👤</div>
+                <div class="overflow-hidden">
+                    <p class="text-[10px] uppercase text-slate-400 font-bold">Conectado como</p>
+                    <p class="text-white font-bold text-sm truncate">{userName}</p>
+                </div>
+            </div>
+            <a href="/logout" class="flex items-center justify-center w-full py-3 rounded-lg bg-red-600/10 text-red-400 hover:bg-red-600 hover:text-white text-xs font-bold uppercase tracking-wide transition border border-red-600/20 hover:border-red-600">
+                Sair do Sistema
+            </a>
+        </div>
+    </aside>
+
+    <main class="flex-1 flex flex-col h-full w-full relative bg-[#f3f4f6]">
+        
+        <header class="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-4 lg:hidden shrink-0 shadow-sm z-20">
+            <div class="flex items-center gap-3">
+                <button id="open-sidebar" class="text-slate-700 p-2 -ml-2 hover:bg-gray-100 rounded-lg transition">
+                    <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                </button>
+                <span class="font-bold text-slate-800 text-lg tracking-tight">NICOPEL</span>
+            </div>
+            <div class="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white font-bold text-xs shadow-md">
+                {userName.charAt(0).toUpperCase()}
+            </div>
+        </header>
+
+        <div class="flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-8 scroll-smooth">
+            <slot />
+        </div>
+    </main>
+
+    <script>
+        const sidebar = document.getElementById('sidebar');
+        const overlay = document.getElementById('mobile-overlay');
+        const openBtn = document.getElementById('open-sidebar');
+        const closeBtn = document.getElementById('close-sidebar');
+
+        function toggleMenu() {
+            // Troca a classe que esconde o menu (-translate-x-full)
+            sidebar.classList.toggle('-translate-x-full');
+            
+            // Mostra/Esconde o fundo escuro
+            if (sidebar.classList.contains('-translate-x-full')) {
+                overlay.classList.add('hidden');
+            } else {
+                overlay.classList.remove('hidden');
+            }
+        }
+
+        // Eventos de clique
+        if(openBtn) openBtn.addEventListener('click', toggleMenu);
+        if(closeBtn) closeBtn.addEventListener('click', toggleMenu);
+        if(overlay) overlay.addEventListener('click', toggleMenu);
+    </script>
+</body>
+</html>

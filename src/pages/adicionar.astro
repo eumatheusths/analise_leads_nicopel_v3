@@ -1,0 +1,186 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { getAuthSheets, SPREADSHEET_ID, getCurrentMonthSheetName, MONTHS, findRealSheetName } from '../lib/sheets';
+
+let success = false;
+let error = null;
+const defaultMonth = getCurrentMonthSheetName();
+
+if (Astro.request.method === "POST") {
+  try {
+    const data = await Astro.request.formData();
+    const sheets = await getAuthSheets();
+    
+    const targetMonth = data.get('target_month') || defaultMonth;
+    
+    // Proteção: Acha o nome real da aba
+    const realSheetName = await findRealSheetName(sheets, targetMonth);
+    if (!realSheetName) throw new Error(`A aba "${targetMonth}" não existe na planilha.`);
+
+    const row = [
+      data.get('nome_cliente'),
+      data.get('data'),
+      data.get('origem'),       // Agora vem do Select (RD, Orgânico...)
+      data.get('numero'),
+      data.get('seguimento'),
+      data.get('quantidade'),
+      data.get('onde'),         // Agora vem do Select (Instagram, Site...)
+      data.get('qualificado'),
+      data.get('venda'),
+      data.get('motivo'),
+      data.get('delegado'),     // Agora vem do Select (Clodoaldo, Michele...)
+      data.get('valor')
+    ];
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `'${realSheetName}'!A:L`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [row] },
+    });
+
+    success = true;
+  } catch (e) {
+    console.error("Erro ao salvar:", e);
+    error = "Erro ao salvar: " + e.message;
+  }
+}
+
+const today = new Date().toISOString().split('T')[0];
+---
+
+<Layout title="Adicionar Lead">
+    <div class="max-w-5xl mx-auto bg-white p-8 rounded-xl shadow-sm border border-gray-200">
+        <div class="mb-6 border-b pb-4 flex justify-between items-center">
+            <div>
+                <h2 class="text-2xl font-bold text-gray-800">Novo Lead</h2>
+                <p class="text-sm text-gray-500">Preencha os dados do cliente</p>
+            </div>
+            <a href="/" class="text-sm font-bold text-gray-500 hover:text-gray-800">Cancelar</a>
+        </div>
+
+        {success && (
+            <div class="bg-green-50 text-green-800 p-4 rounded mb-6 flex items-center gap-2 font-bold border border-green-200 animate-pulse">
+                ✅ Lead salvo com sucesso! <a href="/" class="underline ml-2">Voltar ao Dashboard</a>
+            </div>
+        )}
+
+        {error && (
+            <div class="bg-red-50 text-red-800 p-4 rounded mb-6 font-bold border border-red-200">
+                ❌ {error}
+            </div>
+        )}
+
+        <form method="POST" class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            
+            <div class="md:col-span-3 bg-slate-50 p-4 rounded border border-slate-200 flex items-center gap-3">
+                <span class="font-bold text-slate-800 text-sm uppercase">📅 Mês de Registro:</span>
+                <select name="target_month" class="bg-white border border-slate-300 rounded text-sm py-1.5 px-3 font-medium outline-none focus:border-blue-500">
+                    {MONTHS.map(m => <option value={m} selected={m === defaultMonth}>{m}</option>)}
+                </select>
+            </div>
+
+            <div class="md:col-span-2">
+                <label class="label-form">Nome do Cliente / Empresa *</label>
+                <input name="nome_cliente" required type="text" class="input-form">
+            </div>
+            <div>
+                <label class="label-form">Data *</label>
+                <input name="data" type="date" value={today} class="input-form">
+            </div>
+
+            <div>
+                <label class="label-form">WhatsApp / Contato</label>
+                <input name="numero" type="text" class="input-form">
+            </div>
+            <div>
+                <label class="label-form">Segmento</label>
+                <input name="seguimento" type="text" list="list-seg" class="input-form" placeholder="Ex: Restaurante">
+                <datalist id="list-seg">
+                    <option value="Restaurante"></option>
+                    <option value="Mercado"></option>
+                    <option value="Indústria"></option>
+                    <option value="Varejo"></option>
+                    <option value="Serviços"></option>
+                    <option value="Sorveteria"></option>
+                    <option value="Pizzaria"></option>
+                </datalist>
+            </div>
+            
+            <div>
+                <label class="label-form text-blue-600">Origem (Fonte)</label>
+                <select name="origem" class="input-form bg-blue-50/30 border-blue-200">
+                    <option value="RD">RD</option>
+                    <option value="Orgânico">Orgânico</option>
+                    <option value="Outros">Outros</option>
+                </select>
+            </div>
+
+            <div>
+                <label class="label-form">Qtd. Embalagens</label>
+                <input name="quantidade" type="number" class="input-form">
+            </div>
+            
+            <div class="md:col-span-2">
+                <label class="label-form text-blue-600">Onde nos encontrou? (Detalhe)</label>
+                <select name="onde" class="input-form bg-blue-50/30 border-blue-200">
+                    <option value="">-- Selecione --</option>
+                    <option value="Instagram">Instagram</option>
+                    <option value="Site">Site</option>
+                    <option value="WhatsApp">WhatsApp</option>
+                    <option value="LP Meta">LP Meta</option>
+                    <option value="LP Google">LP Google</option>
+                    <option value="Indicação">Indicação</option>
+                    <option value="Logo em baixo do Pote e Copo">Logo em baixo do Pote e Copo</option>
+                    <option value="Já conhece a empresa">Já conhece a empresa</option>
+                    <option value="E-mail MKT">E-mail MKT</option>
+                </select>
+            </div>
+
+            <div>
+                <label class="label-form text-purple-600">Delegado Para</label>
+                <select name="delegado" class="input-form bg-purple-50/30 border-purple-200">
+                    <option value="">-- Selecione --</option>
+                    <option value="Clodoaldo">Clodoaldo</option>
+                    <option value="Michele">Michele</option>
+                    <option value="Angela">Angela</option>
+                    <option value="Joelma">Joelma</option>
+                </select>
+            </div>
+            <div>
+                <label class="label-form">Lead Qualificado?</label>
+                <select name="qualificado" class="input-form">
+                    <option>Sim</option>
+                    <option>Não</option>
+                </select>
+            </div>
+            <div>
+                <label class="label-form">Venda Fechada?</label>
+                <select name="venda" class="input-form">
+                    <option>Não</option>
+                    <option>Sim</option>
+                </select>
+            </div>
+
+            <div class="md:col-span-2">
+                <label class="label-form">Motivo (Caso NÃO feche)</label>
+                <input name="motivo" type="text" class="input-form" placeholder="Ex: Preço, Prazo...">
+            </div>
+            <div>
+                <label class="label-form">Valor do Pedido (R$)</label>
+                <input name="valor" type="text" class="input-form font-mono text-right text-green-700 font-bold" placeholder="0,00">
+            </div>
+
+            <div class="md:col-span-3 mt-4 pt-4 border-t">
+                <button type="submit" class="w-full bg-slate-900 text-white font-bold py-4 rounded-lg hover:bg-slate-800 transition shadow-lg transform active:scale-[0.99]">
+                    💾 SALVAR NOVO LEAD
+                </button>
+            </div>
+        </form>
+    </div>
+    
+    <style>
+        .label-form { @apply block text-xs font-bold text-gray-500 uppercase mb-1.5 tracking-wide; }
+        .input-form { @apply w-full bg-gray-50 border border-gray-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition hover:bg-white; }
+    </style>
+</Layout>

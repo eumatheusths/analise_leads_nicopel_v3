@@ -1,0 +1,132 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { getAuthSheets, SPREADSHEET_ID, updateRow } from '../lib/sheets';
+
+// Agora recebemos o nome exato da aba pela URL (param 'sheet')
+const sheetName = Astro.url.searchParams.get('sheet');
+const index = Astro.url.searchParams.get('index');
+
+let data = [];
+let success = false;
+let error = null;
+
+// Carregar Dados
+if (sheetName && index !== null) {
+    try {
+        const sheets = await getAuthSheets();
+        const realRow = parseInt(index) + 2; 
+        // Usa o sheetName que veio da URL, pois já é o "real" e usa aspas para proteger
+        const res = await sheets.spreadsheets.values.get({
+            spreadsheetId: SPREADSHEET_ID, 
+            range: `'${sheetName}'!A${realRow}:L${realRow}`
+        });
+        data = res.data.values ? res.data.values[0] : [];
+    } catch (e) {
+        error = "Erro ao carregar lead: " + e.message;
+    }
+}
+
+// Salvar Dados
+if (Astro.request.method === "POST") {
+    try {
+        const fd = await Astro.request.formData();
+        const updated = [
+            fd.get('nome'), fd.get('data'), fd.get('origem'), fd.get('numero'),
+            fd.get('seguimento'), fd.get('qtd'), fd.get('onde'), fd.get('qualificado'),
+            fd.get('venda'), fd.get('motivo'), fd.get('delegado'), fd.get('valor')
+        ];
+        
+        // Atualiza usando o nome da aba que veio da URL (hidden input)
+        const targetSheet = fd.get('target_sheet');
+        
+        // Função de update local para garantir as aspas no nome da aba
+        const sheets = await getAuthSheets();
+        const rowIndex = parseInt(index) + 2;
+        const range = `'${targetSheet}'!A${rowIndex}:L${rowIndex}`; // Aspas adicionadas aqui!
+        
+        await sheets.spreadsheets.values.update({
+            spreadsheetId: SPREADSHEET_ID,
+            range: range,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: { values: [updated] },
+        });
+        
+        success = true;
+        data = updated;
+    } catch (e) {
+        error = "Erro ao salvar: " + e.message;
+    }
+}
+
+const v = (i) => data[i] || '';
+---
+
+<Layout title="Editar Lead">
+    <div class="max-w-4xl mx-auto bg-white p-8 rounded-xl shadow-lg border border-gray-200 mt-4">
+        <div class="flex justify-between items-center mb-6 border-b pb-4">
+            <div>
+                <h2 class="text-xl font-bold text-gray-800">Editando Lead</h2>
+                <p class="text-xs text-gray-500 uppercase font-bold">Aba: {sheetName}</p>
+            </div>
+            <a href="/editar" class="text-sm font-bold text-gray-500 hover:text-gray-800 px-3 py-2 rounded hover:bg-gray-100 transition">← Voltar</a>
+        </div>
+
+        {success && <div class="bg-green-100 text-green-800 p-3 rounded mb-4 font-bold border border-green-200">✅ Dados atualizados com sucesso!</div>}
+        {error && <div class="bg-red-100 text-red-800 p-3 rounded mb-4 font-bold border border-red-200">❌ {error}</div>}
+
+        <form method="POST" class="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <!-- Campo Oculto para manter o nome da aba -->
+            <input type="hidden" name="target_sheet" value={sheetName}>
+
+            <div class="col-span-2">
+                <label class="lbl">Nome do Cliente / Empresa</label>
+                <input name="nome" value={v(0)} class="inp font-bold text-gray-800">
+            </div>
+            
+            <div><label class="lbl">Data</label><input type="date" name="data" value={v(1)} class="inp"></div>
+            <div><label class="lbl">Origem</label>
+                <select name="origem" class="inp">
+                    <option selected={v(2) === 'Google Ads'}>Google Ads</option>
+                    <option selected={v(2) === 'Instagram'}>Instagram</option>
+                    <option selected={v(2) === 'Indicação'}>Indicação</option>
+                    <option selected={v(2) === 'Site Orgânico'}>Site Orgânico</option>
+                    <option selected={!['Google Ads','Instagram','Indicação','Site Orgânico'].includes(v(2))}>Outros</option>
+                </select>
+            </div>
+            
+            <div><label class="lbl">WhatsApp / Contato</label><input name="numero" value={v(3)} class="inp"></div>
+            <div><label class="lbl">Segmento</label><input name="seguimento" value={v(4)} class="inp"></div>
+            
+            <div><label class="lbl">Qtd Embalagens</label><input name="qtd" value={v(5)} class="inp"></div>
+            <div><label class="lbl">Onde encontrou</label><input name="onde" value={v(6)} class="inp"></div>
+            
+            <div class="bg-gray-50 p-3 rounded border">
+                <label class="lbl text-blue-600">Lead Qualificado?</label>
+                <select name="qualificado" class="inp bg-white">
+                    <option selected={v(7) === 'Sim'}>Sim</option>
+                    <option selected={v(7) === 'Não'}>Não</option>
+                </select>
+            </div>
+            <div class="bg-gray-50 p-3 rounded border">
+                <label class="lbl text-green-600">Venda Fechada?</label>
+                <select name="venda" class="inp bg-white">
+                    <option selected={v(8) === 'Sim'}>Sim</option>
+                    <option selected={v(8) === 'Não'}>Não</option>
+                </select>
+            </div>
+            
+            <div class="col-span-2"><label class="lbl">Motivo (se não fechou)</label><input name="motivo" value={v(9)} class="inp"></div>
+            
+            <div><label class="lbl">Delegado Para</label><input name="delegado" value={v(10)} class="inp"></div>
+            <div><label class="lbl">Valor (R$)</label><input name="valor" value={v(11)} class="inp text-right font-mono font-bold text-green-700"></div>
+
+            <div class="col-span-2 mt-4 pt-4 border-t">
+                <button class="w-full bg-blue-600 text-white py-4 rounded-lg font-bold hover:bg-blue-700 transition shadow-lg">💾 SALVAR ALTERAÇÕES</button>
+            </div>
+        </form>
+    </div>
+    <style>
+        .lbl { @apply block text-xs font-bold text-gray-500 uppercase mb-1.5 tracking-wide; }
+        .inp { @apply w-full border border-gray-300 rounded-lg p-2.5 bg-white focus:ring-2 focus:ring-blue-500 outline-none transition; }
+    </style>
+</Layout>

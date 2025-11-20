@@ -1,0 +1,28 @@
+---
+// src/components/Card.astro
+const { title, value, color, icon, isMoney } = Astro.props;
+
+const styles = {
+    blue: 'border-blue-500 text-blue-600 bg-blue-50',
+    green: 'border-green-500 text-green-600 bg-green-50',
+    indigo: 'border-indigo-500 text-indigo-600 bg-indigo-50',
+    emerald: 'border-emerald-500 text-emerald-600 bg-emerald-50',
+    red: 'border-red-500 text-red-600 bg-red-50',
+    yellow: 'border-yellow-500 text-yellow-600 bg-yellow-50',
+    gray: 'border-gray-500 text-gray-600 bg-gray-50',
+};
+
+const theme = styles[color] || styles.blue;
+---
+
+<div class={`bg-white p-5 rounded-xl shadow-sm border-l-4 ${theme.split(' ')[0]} flex justify-between items-start hover:shadow-md transition-shadow`}>
+    <div>
+        <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">{title}</p>
+        <h3 class={`text-2xl font-bold ${isMoney ? 'text-gray-800' : theme.split(' ')[1]}`}>
+            {value}
+        </h3>
+    </div>
+    <div class={`p-2 rounded-lg ${theme.split(' ')[2]} bg-opacity-50`}>
+        <span class="text-xl">{icon}</span>
+    </div>
+</div>

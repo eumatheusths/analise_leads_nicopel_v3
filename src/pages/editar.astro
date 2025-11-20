@@ -1,0 +1,148 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { getAuthSheets, SPREADSHEET_ID, getCurrentMonthSheetName, MONTHS, findRealSheetName } from '../lib/sheets';
+
+const urlMonth = Astro.url.searchParams.get('month');
+const selectedMonth = urlMonth || getCurrentMonthSheetName();
+let rows = [];
+let errorMsg = null;
+
+try {
+    const sheets = await getAuthSheets();
+    const realName = await findRealSheetName(sheets, selectedMonth);
+    if (!realName) throw new Error("Aba não encontrada");
+
+    const response = await sheets.spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range: `'${realName}'!A2:L1000`, 
+    });
+    
+    rows = (response.data.values || []).map((r, i) => {
+        const venda = r[8]?.toLowerCase().trim() === 'sim' ? 1 : 0;
+        return { 
+            data: r, index: i, realSheetName: realName,
+            nome: r[0] || '', dataDate: r[1] || '', isVenda: venda
+        };
+    }).reverse(); 
+} catch (e) {
+    errorMsg = "Erro ao carregar: " + e.message;
+}
+---
+
+<Layout title="Gerenciar Leads">
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+        <div>
+            <h2 class="text-2xl font-bold text-gray-800">Gerenciar Leads</h2>
+            <p class="text-sm text-gray-500">Edite e organize seus contatos</p>
+        </div>
+        
+        <form class="flex gap-2 items-center bg-white p-2 rounded-lg border shadow-sm w-full md:w-auto">
+            <span class="text-xs font-bold uppercase text-gray-400 whitespace-nowrap">Mês:</span>
+            <select name="month" onchange="this.form.submit()" class="text-sm border-none bg-transparent font-bold text-gray-700 focus:ring-0 cursor-pointer outline-none w-full">
+                {MONTHS.map(m => <option value={m} selected={m === selectedMonth}>{m}</option>)}
+            </select>
+        </form>
+    </div>
+
+    {errorMsg && <div class="bg-red-100 text-red-700 p-4 rounded mb-4">{errorMsg}</div>}
+
+    <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mb-6 grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+        <div class="md:col-span-8 relative">
+            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <span class="text-gray-400">🔍</span>
+            </div>
+            <input type="text" id="searchInput" placeholder="Pesquisar por nome, vendedor..." class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition">
+        </div>
+        <div class="md:col-span-4">
+            <select id="sortSelect" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-700 focus:ring-2 focus:ring-blue-500 outline-none cursor-pointer bg-gray-50">
+                <option value="recente">📅 Mais Recentes</option>
+                <option value="antigo">📅 Mais Antigos</option>
+                <option value="az">🔤 Ordem A-Z</option>
+                <option value="venda">💰 Quem Comprou</option>
+                <option value="aberto">⏳ Em Aberto</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="bg-white shadow rounded-lg overflow-hidden border border-gray-200 overflow-x-auto">
+        <table class="min-w-full text-sm text-left" id="leadsTable">
+            <thead class="bg-gray-50 text-gray-500 font-bold uppercase text-xs border-b">
+                <tr>
+                    <th class="px-6 py-4 whitespace-nowrap">Cliente / Empresa</th>
+                    <th class="px-6 py-4 whitespace-nowrap">Data</th>
+                    <th class="px-6 py-4 whitespace-nowrap">Vendedor</th>
+                    <th class="px-6 py-4 whitespace-nowrap">Status</th>
+                    <th class="px-6 py-4 text-right whitespace-nowrap">Ação</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+                {rows.map((row) => (
+                    <tr class="lead-row hover:bg-blue-50 transition group" 
+                        data-nome={row.nome.toLowerCase()} 
+                        data-date={row.dataDate} 
+                        data-venda={row.isVenda}
+                        data-search={`${row.data.join(' ')}`.toLowerCase()}
+                    >
+                        <td class="px-6 py-4 font-bold text-gray-700 whitespace-nowrap">{row.data[0] || '-'}</td>
+                        <td class="px-6 py-4 text-gray-500 whitespace-nowrap">{row.data[1] ? row.data[1].split('-').reverse().join('/') : '-'}</td>
+                        <td class="px-6 py-4 text-gray-500 uppercase text-xs font-bold whitespace-nowrap">{row.data[10] || '-'}</td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            {row.data[8]?.toLowerCase() === 'sim' 
+                                ? <span class="bg-emerald-100 text-emerald-800 px-2 py-1 rounded text-xs font-bold border border-emerald-200">VENDA FECHADA</span>
+                                : <span class="bg-gray-100 text-gray-600 px-2 py-1 rounded text-xs font-medium border border-gray-200">EM ABERTO</span>
+                            }
+                        </td>
+                        <td class="px-6 py-4 text-right whitespace-nowrap">
+                            <a href={`/editar-lead?sheet=${encodeURIComponent(row.realSheetName)}&index=${row.index}`} 
+                               class="text-blue-600 font-bold border border-blue-100 bg-blue-50 px-3 py-1.5 rounded hover:bg-blue-100 transition">
+                                ✏️ Editar
+                            </a>
+                        </td>
+                    </tr>
+                ))}
+                <tr id="noResults" class="hidden"><td colspan="5" class="px-6 py-10 text-center text-gray-400">Nenhum lead encontrado.</td></tr>
+                {rows.length === 0 && (<tr><td colspan="5" class="px-6 py-8 text-center text-gray-400">A planilha deste mês está vazia.</td></tr>)}
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const searchInput = document.getElementById('searchInput');
+        const sortSelect = document.getElementById('sortSelect');
+        const tableBody = document.querySelector('#leadsTable tbody');
+        const noResultsMsg = document.getElementById('noResults');
+        let rows = Array.from(document.querySelectorAll('.lead-row'));
+
+        searchInput.addEventListener('input', (e) => {
+            const term = e.target.value.toLowerCase();
+            let visibleCount = 0;
+            rows.forEach(row => {
+                const text = row.getAttribute('data-search');
+                if (text.includes(term)) { row.style.display = ''; visibleCount++; } 
+                else { row.style.display = 'none'; }
+            });
+            if (visibleCount === 0 && rows.length > 0) noResultsMsg.classList.remove('hidden');
+            else noResultsMsg.classList.add('hidden');
+        });
+
+        sortSelect.addEventListener('change', () => {
+            const criteria = sortSelect.value;
+            rows.sort((a, b) => {
+                const nomeA = a.getAttribute('data-nome');
+                const nomeB = b.getAttribute('data-nome');
+                const dateA = a.getAttribute('data-date') || '0000-00-00';
+                const dateB = b.getAttribute('data-date') || '0000-00-00';
+                const vendaA = parseInt(a.getAttribute('data-venda'));
+                const vendaB = parseInt(b.getAttribute('data-venda'));
+
+                if (criteria === 'az') return nomeA.localeCompare(nomeB);
+                else if (criteria === 'recente') return dateB.localeCompare(dateA);
+                else if (criteria === 'antigo') return dateA.localeCompare(dateB);
+                else if (criteria === 'venda') return vendaB - vendaA;
+                else if (criteria === 'aberto') return vendaA - vendaB;
+                return 0;
+            });
+            rows.forEach(row => tableBody.insertBefore(row, noResultsMsg));
+        });
+    </script>
+</Layout>
