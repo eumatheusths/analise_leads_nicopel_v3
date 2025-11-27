@@ -1,88 +1,188 @@
 ---
 import Layout from '../layouts/Layout.astro';
+import { getAuthSheets, SPREADSHEET_ID, MONTHS, getCurrentMonthSheetName } from '../lib/sheets';
 
-// --- ÁREA DE EDIÇÃO DOS DADOS ---
-// Para adicionar um novo mês, adicione uma nova coluna aqui nos dados.
-const headers = ["Métricas", "Julho", "Agosto", "Setembro", "Outubro", "Novembro"];
+const urlMonth = Astro.url.searchParams.get('month');
+const selectedMonth = urlMonth || getCurrentMonthSheetName();
 
-const dados = [
-    { label: "Investimento", val: ["R$ 5.060,60", "R$ 3.941,54", "R$ 4.245,38", "R$ 3.655,74", "R$ 3.291,50"] },
-    { label: "Leads", val: ["400", "742", "1.148", "579", "353"] },
-    { label: "Custo por Lead", val: ["R$ 12,65", "R$ 5,31", "R$ 3,70", "R$ 6,31", "R$ 9,32"] },
-    { label: "% de MQL", val: ["11,00%", "4,85%", "0,78%", "2,25%", "1,42%"] },
-    { label: "MQL", val: ["44", "36", "9", "13", "5"] },
-    { label: "Custo por MQL", val: ["R$ 115,01", "R$ 109,49", "R$ 471,71", "R$ 281,21", "R$ 658,30"] },
-    { label: "Conv. Lead p/ Venda", val: ["1,50%", "0,40%", "0,35%", "1,04%", "1,42%"] },
-    { label: "Conv. MQL p/ Venda", val: ["13,64%", "8,33%", "44,44%", "46,15%", "100,00%"] },
-    { label: "Vendas", val: ["6", "3", "4", "6", "5"] },
-    { label: "Custo por Venda", val: ["R$ 843,43", "R$ 1.313,85", "R$ 1.061,35", "R$ 609,29", "-"] },
-    { label: "Ticket Médio", val: ["R$ 3.663,75", "R$ 14.219,00", "R$ 9.579,00", "R$ 4.684,08", "R$ 10.091,37"] },
+let roiData = [];
+let errorMsg = null;
+let successMsg = null;
+
+// Mapa de ícones e cores para deixar bonito
+const metricConfig = {
+    "Investimento": { icon: "💸", color: "text-red-600", bg: "bg-red-50" },
+    "Faturamento Total": { icon: "💰", color: "text-green-600", bg: "bg-green-50", bold: true },
+    "ROAS": { icon: "🚀", color: "text-blue-600", bg: "bg-blue-50", bold: true },
+    "Vendas": { icon: "🤝", color: "text-emerald-600", bg: "bg-emerald-50" },
+    "Leads": { icon: "👥", color: "text-gray-600", bg: "bg-gray-50" },
+    "default": { icon: "📊", color: "text-slate-600", bg: "bg-white" }
+};
+
+// --- LÓGICA DE SALVAR (POST) ---
+if (Astro.request.method === "POST") {
+    try {
+        const formData = await Astro.request.formData();
+        const sheets = await getAuthSheets();
+        
+        // 1. Descobrir a letra da coluna do mês (Jan=B, Fev=C...)
+        // O array MONTHS começa em 0 (Janeiro). Na planilha:
+        // A=Metricas, B=Janeiro(idx 0), C=Fevereiro(idx 1)...
+        // Então indice do mês + 2 = Indice da coluna na API (1-based? nao, A1 notation)
+        // Vamos simplificar: Pegar tudo, achar o indice do array e atualizar a coluna correspondente.
+        
+        const monthIndex = MONTHS.indexOf(selectedMonth);
+        if (monthIndex === -1) throw new Error("Mês inválido");
+
+        // Construir o array de valores para salvar (vertical)
+        // Precisamos garantir que a ordem dos inputs bata com a ordem das linhas na planilha
+        // Vamos ler a coluna A primeiro para garantir a ordem
+        const meta = await sheets.spreadsheets.values.get({
+            spreadsheetId: SPREADSHEET_ID,
+            range: `'ROI'!A2:A20`
+        });
+        
+        const metricNames = meta.data.values ? meta.data.values.map(r => r[0]) : [];
+        
+        // Monta a coluna de valores novos
+        const newValues = metricNames.map(name => {
+            const val = formData.get(name) || "0";
+            return [val]; // A API pede array de arrays para colunas [[val1], [val2]]
+        });
+
+        // Calcula a letra da coluna. B=Janeiro.
+        // B é charCode 66.
+        const colLetter = String.fromCharCode(66 + monthIndex); // 66 + 0 = B, 66+1 = C...
+        
+        // Atualiza a coluna do mês
+        await sheets.spreadsheets.values.update({
+            spreadsheetId: SPREADSHEET_ID,
+            range: `'ROI'!${colLetter}2:${colLetter}${1 + newValues.length}`,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: { values: newValues }
+        });
+
+        successMsg = "Dados atualizados com sucesso!";
+
+    } catch (e) {
+        errorMsg = "Erro ao salvar: " + e.message;
+    }
+}
+
+// --- LÓGICA DE LEITURA (GET) ---
+try {
+    const sheets = await getAuthSheets();
     
-    // Destaque para Faturamento e ROAS
-    { label: "Faturamento Total", isBold: true, val: ["R$ 21.982,49", "R$ 42.657,00", "R$ 38.316,00", "R$ 28.104,47", "R$ 50.456,84"] },
-    { label: "ROAS (Total)", isBold: true, isGreen: true, val: ["4,34", "10,82", "9,03", "7,69", "15,33"] },
-    
-    // Espaço em branco ou separador
-    { separator: true },
+    // 1. Pega Nomes das Métricas (A) e Valores do Mês Selecionado
+    const monthIndex = MONTHS.indexOf(selectedMonth);
+    const colLetter = String.fromCharCode(66 + monthIndex); // B, C, D...
 
-    { label: "LTV + 3 Compras (Est.)", val: ["R$ 65.947,47", "R$ 127.971,00", "R$ 124.527,00", "R$ 84.313,41", "R$ 141.279,15"] },
-    { label: "ROAS LTV 3", isBold: true, val: ["13,03", "32,47", "29,33", "23,06", "42,92"] },
-];
+    // Busca coluna A (Nomes) e Coluna do Mês
+    // BatchGet para ser rápido
+    const response = await sheets.spreadsheets.values.batchGet({
+        spreadsheetId: SPREADSHEET_ID,
+        ranges: [`'ROI'!A2:A20`, `'ROI'!${colLetter}2:${colLetter}20`]
+    });
+
+    const labels = response.data.valueRanges[0].values || [];
+    const values = response.data.valueRanges[1].values || [];
+
+    // Mescla os dois arrays
+    roiData = labels.map((labelRow, i) => {
+        const label = labelRow[0];
+        const val = values[i] ? values[i][0] : "-";
+        
+        // Configuração visual
+        const config = metricConfig[label] || metricConfig["default"];
+        
+        return {
+            label: label,
+            value: val,
+            ...config
+        };
+    });
+
+} catch (e) {
+    errorMsg = "Certifique-se de criar a aba 'ROI' na planilha com as métricas na Coluna A.";
+}
 ---
 
-<Layout title="Retorno Sobre Investimento">
-    <div class="mb-8">
-        <h2 class="text-3xl font-bold text-gray-800">Retorno Sobre Investimento (ROI)</h2>
-        <p class="text-gray-500 text-sm">Acompanhamento mensal de performance de mídia paga.</p>
+<Layout title="ROI Financeiro">
+    
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+        <div>
+            <h2 class="text-3xl font-bold text-gray-800">Performance Financeira</h2>
+            <p class="text-sm text-gray-500">Dados consolidados de: <span class="font-bold text-blue-600 uppercase">{selectedMonth}</span></p>
+        </div>
+        
+        <div class="flex gap-2 w-full md:w-auto">
+            <form method="GET" class="bg-white p-2 rounded-lg border shadow-sm flex items-center gap-2 w-full">
+                <span class="text-xs font-bold text-gray-500 uppercase px-2">Mês:</span>
+                <select name="month" onchange="this.form.submit()" class="bg-gray-100 border-transparent rounded text-sm font-bold text-gray-700 focus:ring-0 py-2 px-3 cursor-pointer w-full outline-none">
+                    {MONTHS.map(m => (
+                        <option value={m} selected={m === selectedMonth}>{m}</option>
+                    ))}
+                </select>
+            </form>
+            
+            <button onclick="document.getElementById('editModal').showModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold shadow-sm transition whitespace-nowrap">
+                ✏️ Editar Dados
+            </button>
+        </div>
     </div>
 
-    <div class="bg-white shadow-lg rounded-xl overflow-hidden border border-gray-200">
-        <div class="overflow-x-auto">
-            <table class="min-w-full text-sm text-left">
-                <thead class="bg-blue-600 text-white font-bold uppercase text-xs">
-                    <tr>
-                        {headers.map((header, index) => (
-                            <th class={`px-6 py-4 whitespace-nowrap ${index === 0 ? 'sticky left-0 z-10 bg-blue-700 w-48' : ''}`}>
-                                {header}
-                            </th>
-                        ))}
-                    </tr>
-                </thead>
+    {successMsg && <div class="bg-green-100 text-green-700 p-4 rounded mb-6 font-bold text-center animate-bounce">{successMsg}</div>}
+    {errorMsg && <div class="bg-red-100 text-red-700 p-4 rounded mb-6 font-bold text-center">{errorMsg}</div>}
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-12">
+        {roiData.map((item) => (
+            <div class={`p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col justify-between hover:shadow-md transition bg-white relative overflow-hidden group`}>
+                <div class={`absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition text-4xl`}>{item.icon}</div>
                 
-                <tbody class="divide-y divide-gray-100">
-                    {dados.map((row) => (
-                        row.separator ? (
-                            <tr class="bg-gray-50"><td colspan={headers.length} class="py-2"></td></tr>
-                        ) : (
-                            <tr class="hover:bg-blue-50 transition group">
-                                <td class={`px-6 py-3 whitespace-nowrap sticky left-0 z-10 bg-white group-hover:bg-blue-50 border-r border-gray-100
-                                    ${row.isBold ? 'font-black text-gray-900' : 'font-medium text-gray-600'}`}>
-                                    {row.label}
-                                </td>
-                                
-                                {row.val.map(valor => (
-                                    <td class={`px-6 py-3 whitespace-nowrap text-right font-mono
-                                        ${row.isBold ? 'font-bold' : ''}
-                                        ${row.isGreen ? 'text-green-600 bg-green-50' : 'text-gray-700'}
-                                    `}>
-                                        {valor}
-                                    </td>
-                                ))}
-                            </tr>
-                        )
-                    ))}
-                </tbody>
-            </table>
-        </div>
-    </div>
-    
-    <div class="mt-6 bg-yellow-50 border-l-4 border-yellow-400 p-4">
-        <div class="flex">
-            <div class="ml-3">
-                <p class="text-sm text-yellow-700">
-                    <strong>Nota:</strong> Dados atualizados manualmente com base no fechamento mensal de tráfego pago.
-                </p>
+                <div>
+                    <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">{item.label}</p>
+                    <h3 class={`text-2xl ${item.bold ? 'font-black' : 'font-bold'} ${item.color}`}>
+                        {item.value}
+                    </h3>
+                </div>
+                
+                {/* Barrinha decorativa embaixo */}
+                <div class={`h-1 w-full mt-4 rounded-full ${item.bg.replace('bg-', 'bg-opacity-50 ')} bg-gray-200`}>
+                    <div class={`h-1 rounded-full ${item.color.replace('text-', 'bg-')} w-1/2`}></div>
+                </div>
             </div>
-        </div>
+        ))}
     </div>
+
+    <dialog id="editModal" class="modal rounded-xl shadow-2xl p-0 w-full max-w-2xl backdrop:bg-gray-900/50">
+        <div class="bg-white">
+            <div class="p-6 border-b border-gray-200 flex justify-between items-center bg-slate-50">
+                <h3 class="text-xl font-bold text-gray-800">Editar Dados de {selectedMonth}</h3>
+                <button onclick="document.getElementById('editModal').close()" class="text-gray-400 hover:text-gray-600 font-bold text-xl">&times;</button>
+            </div>
+            
+            <form method="POST" class="p-6">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[60vh] overflow-y-auto pr-2">
+                    {roiData.map((item) => (
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-1">{item.label}</label>
+                            <input 
+                                type="text" 
+                                name={item.label} 
+                                value={item.value === '-' ? '' : item.value} 
+                                class="w-full border border-gray-300 rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none font-medium text-gray-700"
+                                placeholder="Digite o valor..."
+                            >
+                        </div>
+                    ))}
+                </div>
+                
+                <div class="mt-6 pt-4 border-t border-gray-100 flex justify-end gap-3">
+                    <button type="button" onclick="document.getElementById('editModal').close()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-bold transition">Cancelar</button>
+                    <button type="submit" class="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold shadow-lg transition transform active:scale-95">Salvar Alterações</button>
+                </div>
+            </form>
+        </div>
+    </dialog>
+
 </Layout>
