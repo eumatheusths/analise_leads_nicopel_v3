@@ -1,281 +1,285 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import { getAuthSheets, SPREADSHEET_ID, MONTHS, getCurrentMonthSheetName } from '../lib/sheets';
+import Card from '../components/Card.astro';
+import { getAuthSheets, SPREADSHEET_ID, getCurrentMonthSheetName, MONTHS, findRealSheetName } from '../lib/sheets';
 
 const urlMonth = Astro.url.searchParams.get('month');
 const selectedMonth = urlMonth || getCurrentMonthSheetName();
 
-let roiData = [];
 let errorMsg = null;
-let successMsg = null;
+let metrics = { total: 0, organicos: 0, qualificados: 0, vendas: 0, desqualificados: 0, faturamento: 0 };
 
-// Configuração Visual (Ícones e Cores para cada métrica específica)
-const metricConfig = {
-    "Investimento": { icon: "💸", color: "text-red-600", bg: "bg-red-50" },
-    "Leads": { icon: "👥", color: "text-gray-600", bg: "bg-gray-50" },
-    "Custo por Leads": { icon: "📉", color: "text-orange-600", bg: "bg-orange-50" },
-    "% de MQL": { icon: "🎯", color: "text-purple-600", bg: "bg-purple-50" },
-    "MQL": { icon: "⭐", color: "text-indigo-600", bg: "bg-indigo-50" },
-    "Custo por MQL": { icon: "💲", color: "text-orange-600", bg: "bg-orange-50" },
-    "Conversão de Lead para Venda": { icon: "🔄", color: "text-blue-500", bg: "bg-blue-50" },
-    "Conversão de MQL para Venda": { icon: "⚡", color: "text-blue-700", bg: "bg-blue-50" },
-    "Vendas": { icon: "🤝", color: "text-emerald-600", bg: "bg-emerald-50" },
-    "Custo por Venda": { icon: "🏷️", color: "text-red-500", bg: "bg-red-50" },
-    "Ticket Médio": { icon: "💳", color: "text-cyan-600", bg: "bg-cyan-50" },
-    
-    // Destaques Principais
-    "Faturamento Total": { icon: "💰", color: "text-green-700", bg: "bg-green-100", bold: true, border: "border-green-300" },
-    "ROAS (Total)": { icon: "🚀", color: "text-blue-700", bg: "bg-blue-100", bold: true, border: "border-blue-300" },
-    
-    // LT Metrics
-    "COM LT DE + 3 COMPRAS (66%)": { icon: "📦", color: "text-purple-700", bg: "bg-purple-100", bold: true },
-    "ROAS LT 3": { icon: "📈", color: "text-pink-600", bg: "bg-pink-50", bold: true },
-    
-    "default": { icon: "bar_chart", color: "text-slate-600", bg: "bg-white" }
-};
+// Dados para Gráficos
+let chartData = { origem: {}, segmento: {}, vendedor: {}, organicoVsAds: { org: 0, ads: 0 } };
 
-// --- SALVAR DADOS (POST) ---
-if (Astro.request.method === "POST") {
-    try {
-        const formData = await Astro.request.formData();
-        const sheets = await getAuthSheets();
-        
-        const monthIndex = MONTHS.indexOf(selectedMonth);
-        if (monthIndex === -1) throw new Error("Mês inválido");
+// Listas Especiais
+let closedSalesList = []; // Lista de Vendas
+let top5LossReasons = []; // Lista de Motivos de Perda (Top 5)
 
-        // Lê a coluna A para garantir a ordem de salvamento
-        const meta = await sheets.spreadsheets.values.get({
-            spreadsheetId: SPREADSHEET_ID,
-            range: `'ROI'!A2:A30` // Lê até a linha 30 para garantir
-        });
-        
-        const metricNames = meta.data.values ? meta.data.values.map(r => r[0]) : [];
-        
-        // Mapeia os valores enviados pelo formulário na ordem da planilha
-        const newValues = metricNames.map(name => {
-            if (!name) return [""]; // Se a linha A estiver vazia, salva vazio
-            const val = formData.get(name) || ""; // Se não mandou nada, salva vazio (não zero, pra não sujar)
-            return [val]; 
-        });
+let realSheetName = selectedMonth;
 
-        const colLetter = String.fromCharCode(66 + monthIndex); // B, C, D...
-        
-        await sheets.spreadsheets.values.update({
-            spreadsheetId: SPREADSHEET_ID,
-            range: `'ROI'!${colLetter}2:${colLetter}${1 + newValues.length}`,
-            valueInputOption: 'USER_ENTERED',
-            requestBody: { values: newValues }
-        });
-
-        successMsg = "Dados atualizados com sucesso!";
-    } catch (e) {
-        errorMsg = "Erro ao salvar: " + e.message;
-    }
-}
-
-// --- LER DADOS (GET) ---
 try {
     const sheets = await getAuthSheets();
-    const monthIndex = MONTHS.indexOf(selectedMonth);
-    const colLetter = String.fromCharCode(66 + monthIndex);
+    
+    const foundName = await findRealSheetName(sheets, selectedMonth);
+    if (foundName) realSheetName = foundName;
 
-    const response = await sheets.spreadsheets.values.batchGet({
+    const monthResponse = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
-        ranges: [`'ROI'!A2:A30`, `'ROI'!${colLetter}2:${colLetter}30`]
+        range: `'${realSheetName}'!A2:L1000`, 
+    }).catch(() => ({ data: { values: [] } }));
+
+    const monthRows = monthResponse.data.values || [];
+    metrics.total = monthRows.length;
+
+    // Objeto temporário para contar motivos
+    let lossCountMap = {};
+
+    monthRows.forEach(row => {
+        // Mapeamento
+        const cliente = row[0] || 'Sem nome';
+        const origem = (row[2] || 'Não Informado').trim();
+        const segmento = (row[4] || 'Outros').trim();
+        const qualificado = (row[7] || '').toLowerCase().trim();
+        const venda = (row[8] || '').toLowerCase().trim();
+        const motivoRaw = row[9] || ''; // Coluna J
+        
+        // Tratamento Vendedor (Coluna K)
+        let vendedor = row[10] || 'Sem Responsável';
+        if (vendedor.trim() === '' || vendedor.toLowerCase().includes('diretoria')) {
+            vendedor = 'Sem Responsável';
+        }
+
+        const valorStr = row[11] ? row[11].replace('R$', '').replace(/\./g, '').replace(',', '.').trim() : '0';
+        const valorFloat = parseFloat(valorStr) || 0;
+
+        // Métricas Gerais
+        const origemLow = origem.toLowerCase();
+        if (origemLow.includes('ads') || origemLow.includes('instagram') || origemLow.includes('face') || origemLow.includes('google')) {
+             // Ads
+        } else {
+            metrics.organicos++;
+        }
+
+        if (qualificado === 'sim') metrics.qualificados++;
+        if (qualificado === 'não') metrics.desqualificados++;
+        
+        if (venda === 'sim') {
+            metrics.vendas++;
+            metrics.faturamento += valorFloat;
+            
+            closedSalesList.push({
+                cliente, valor: valorFloat, segmento, origem, vendedor
+            });
+        } else {
+            // LÓGICA DE PERDA (Coluna J)
+            // Se NÃO vendeu e tem algo escrito na coluna J
+            if (motivoRaw.trim().length > 2) {
+                // Padroniza o texto (Primeira letra maiúscula, resto igual)
+                // Isso evita duplicar "Preço" e "preço"
+                const motivoFormatado = motivoRaw.trim().charAt(0).toUpperCase() + motivoRaw.trim().slice(1).toLowerCase();
+                lossCountMap[motivoFormatado] = (lossCountMap[motivoFormatado] || 0) + 1;
+            }
+        }
+
+        // Gráficos Charts
+        chartData.origem[origem] = (chartData.origem[origem] || 0) + 1;
+        chartData.segmento[segmento] = (chartData.segmento[segmento] || 0) + 1;
+        chartData.vendedor[vendedor] = (chartData.vendedor[vendedor] || 0) + 1;
+
+        if (origemLow.includes('ads') || origemLow.includes('patrocinado') || origemLow.includes('google')) {
+            chartData.organicoVsAds.ads++;
+        } else {
+            chartData.organicoVsAds.org++;
+        }
     });
 
-    const labels = response.data.valueRanges[0].values || [];
-    const values = response.data.valueRanges[1].values || [];
+    // Ordenar Vendas
+    closedSalesList.sort((a, b) => b.valor - a.valor);
 
-    roiData = labels.map((labelRow, i) => {
-        const label = labelRow[0];
-        // Se não tiver label (linha vazia na planilha), retorna null para filtrar depois
-        if (!label || label.trim() === "") return null;
-
-        const val = values[i] ? values[i][0] : "-";
-        const config = metricConfig[label] || metricConfig["default"];
-        
-        return { label: label, value: val, ...config };
-    }).filter(item => item !== null); // Remove as linhas vazias da visualização
+    // PROCESSAR TOP 5 MOTIVOS (Transformar o Mapa em Lista Ordenada)
+    top5LossReasons = Object.entries(lossCountMap)
+        .sort((a, b) => b[1] - a[1]) // Ordena do maior para o menor
+        .slice(0, 5) // Pega só os 5 primeiros
+        .map(([motivo, qtd]) => ({ motivo, qtd }));
 
 } catch (e) {
-    errorMsg = "Certifique-se de criar a aba 'ROI' na planilha.";
+    errorMsg = "Erro ao carregar dados: " + e.message;
 }
+
+const chartsJSON = JSON.stringify(chartData);
 ---
 
-<Layout title="ROI Financeiro">
-    <script is:inline src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-
-    <div class="flex flex-col xl:flex-row justify-between items-start xl:items-center mb-8 gap-4">
+<Layout title="Dashboard">
+    <div class="flex flex-col md:flex-row justify-between items-end md:items-center mb-8 gap-4">
         <div>
-            <h2 class="text-3xl font-bold text-gray-800">Performance Financeira</h2>
-            <p class="text-sm text-gray-500">Mês de Referência: <span class="font-bold text-blue-600 uppercase">{selectedMonth}</span></p>
+            <h2 class="text-3xl font-bold text-gray-800">Dashboard Nicopel</h2>
+            <p class="text-gray-500 text-sm">Visão Mensal: <span class="font-bold text-blue-600 uppercase">{realSheetName}</span></p>
         </div>
         
-        <div class="flex flex-col sm:flex-row gap-2 w-full xl:w-auto">
-            <form method="GET" class="bg-white p-2 rounded-lg border shadow-sm flex items-center gap-2 flex-1 sm:flex-none">
-                <span class="text-xs font-bold text-gray-500 uppercase px-2">Mês:</span>
-                <select name="month" onchange="this.form.submit()" class="bg-gray-100 border-transparent rounded text-sm font-bold text-gray-700 focus:ring-0 py-2 px-3 cursor-pointer w-full outline-none">
-                    {MONTHS.map(m => (
-                        <option value={m} selected={m === selectedMonth}>{m}</option>
-                    ))}
-                </select>
-            </form>
-            
-            <div class="flex gap-2">
-                <button onclick="downloadTemplate()" class="bg-green-100 hover:bg-green-200 text-green-700 px-4 py-2 rounded-lg font-bold shadow-sm transition text-sm flex items-center gap-2 whitespace-nowrap">
-                    📥 Modelo
-                </button>
-                
-                <label class="bg-indigo-100 hover:bg-indigo-200 text-indigo-700 px-4 py-2 rounded-lg font-bold shadow-sm transition text-sm flex items-center gap-2 whitespace-nowrap cursor-pointer">
-                    📤 Importar
-                    <input type="file" id="importFile" accept=".xlsx, .csv" class="hidden" onchange="handleImport(this)">
-                </label>
-
-                <button onclick="document.getElementById('editModal').showModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold shadow-sm transition whitespace-nowrap text-sm flex items-center gap-2">
-                    ✏️ Editar
-                </button>
-            </div>
-        </div>
+        <form method="GET" class="bg-white p-1.5 rounded-lg border shadow-sm flex items-center gap-2">
+            <span class="text-xs font-bold text-gray-500 uppercase px-2">Mês:</span>
+            <select name="month" onchange="this.form.submit()" class="bg-gray-100 border-transparent rounded text-sm font-bold text-gray-700 focus:ring-0 py-1 px-3 cursor-pointer h-9">
+                {MONTHS.map(m => (
+                    <option value={m} selected={m === selectedMonth}>{m}</option>
+                ))}
+            </select>
+        </form>
     </div>
 
-    {successMsg && <div class="bg-green-100 text-green-700 p-4 rounded mb-6 font-bold text-center border border-green-200">{successMsg}</div>}
-    {errorMsg && <div class="bg-red-100 text-red-700 p-4 rounded mb-6 font-bold text-center border border-red-200">{errorMsg}</div>}
+    {errorMsg && <div class="bg-red-100 text-red-700 p-4 rounded mb-4 font-bold">{errorMsg}</div>}
 
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-12">
-        {roiData.map((item) => (
-            <div class={`p-6 rounded-xl shadow-sm border ${item.border ? item.border : 'border-gray-100'} flex flex-col justify-between hover:shadow-md transition bg-white relative overflow-hidden group`}>
-                <div class={`absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition text-4xl grayscale hover:grayscale-0`}>
-                    {item.icon}
-                </div>
-                
-                <div>
-                    <p class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">{item.label}</p>
-                    <h3 class={`text-2xl ${item.bold ? 'font-black' : 'font-bold'} ${item.color} truncate`}>
-                        {item.value}
-                    </h3>
-                </div>
-                
-                <div class={`h-1.5 w-full mt-4 rounded-full ${item.bg} bg-opacity-50`}>
-                    <div class={`h-1.5 rounded-full ${item.color.replace('text-', 'bg-')} w-1/2 opacity-70`}></div>
-                </div>
-            </div>
-        ))}
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 mb-8">
+        <Card title="Total Leads" value={metrics.total} color="blue" icon="👥" />
+        <Card title="Orgânicos" value={metrics.organicos} color="green" icon="🌿" />
+        <Card title="Qualificados" value={metrics.qualificados} color="indigo" icon="⭐" />
+        <Card title="Vendas" value={metrics.vendas} color="emerald" icon="💰" />
+        <Card title="Desqualificados" value={metrics.desqualificados} color="red" icon="🚫" />
+        <Card title="Faturamento" value={new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(metrics.faturamento)} color="yellow" icon="💲" isMoney={true} />
     </div>
 
-    <dialog id="editModal" class="modal rounded-xl shadow-2xl p-0 w-full max-w-2xl backdrop:bg-gray-900/50">
-        <div class="bg-white">
-            <div class="p-6 border-b border-gray-200 flex justify-between items-center bg-slate-50">
-                <h3 class="text-xl font-bold text-gray-800">Editar Métricas - {selectedMonth}</h3>
-                <button onclick="document.getElementById('editModal').close()" class="text-gray-400 hover:text-gray-600 font-bold text-xl">&times;</button>
-            </div>
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-8">
+        
+        <div class="space-y-6">
             
-            <form method="POST" class="p-6">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
-                    {roiData.map((item) => (
-                        <div class="relative">
-                            <label class="block text-[10px] font-bold text-gray-500 uppercase mb-1">{item.label}</label>
-                            <div class="relative">
-                                <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400 pointer-events-none">
-                                    {item.label.includes('%') || item.label.includes('Conversão') ? '%' : (item.label.includes('ROAS') ? 'x' : 'R$')}
-                                </span>
-                                <input 
-                                    type="text" 
-                                    name={item.label} 
-                                    id={`input_${item.label.replace(/\s+/g, '_')}`}
-                                    value={item.value === '-' ? '' : item.value} 
-                                    class="w-full border border-gray-300 rounded-lg p-2.5 pl-8 focus:ring-2 focus:ring-blue-500 outline-none font-medium text-gray-700 text-sm"
-                                    placeholder="0,00"
-                                >
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                <h3 class="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2">
+                    Top 5 Motivos de Perda - {realSheetName}
+                </h3>
+                
+                <div class="flex flex-col gap-3">
+                    {top5LossReasons.length === 0 ? (
+                        <p class="text-gray-400 text-sm text-center py-4">Nenhuma perda registrada com motivo.</p>
+                    ) : (
+                        top5LossReasons.map((item, index) => (
+                            <div class={`flex justify-between items-center p-3 rounded-lg ${index === 1 ? 'bg-gray-50' : 'bg-white border-b border-gray-50'}`}>
+                                <div class="flex gap-3 items-start">
+                                    <span class="text-gray-400 font-bold min-w-[20px]">{index + 1}.</span>
+                                    <span class="text-gray-700 text-sm font-medium leading-snug">{item.motivo}</span>
+                                </div>
+                                <span class="font-bold text-gray-800 ml-4">{item.qtd}</span>
                             </div>
-                        </div>
-                    ))}
+                        ))
+                    )}
                 </div>
-                
-                <div class="mt-6 pt-4 border-t border-gray-100 flex justify-end gap-3">
-                    <button type="button" onclick="document.getElementById('editModal').close()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-bold transition text-sm">Cancelar</button>
-                    <button type="submit" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold shadow-lg transition transform active:scale-95 text-sm">Salvar Dados</button>
-                </div>
-            </form>
+            </div>
+
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                <h3 class="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+                    👔 Leads por Vendedor
+                </h3>
+                <div id="chart-vendedor" class="h-64"></div>
+            </div>
         </div>
-    </dialog>
 
+        <div class="space-y-6">
+             <div class="grid grid-cols-1 md:grid-cols-2 gap-6 h-full">
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                    <h4 class="text-xs font-bold text-gray-400 uppercase mb-4">Origem</h4>
+                    <div id="chart-origem"></div>
+                </div>
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                    <h4 class="text-xs font-bold text-gray-400 uppercase mb-4">Segmentos</h4>
+                    <div id="chart-segmento"></div>
+                </div>
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 col-span-1 md:col-span-2">
+                    <h4 class="text-xs font-bold text-gray-400 uppercase mb-4">Orgânico vs Pago</h4>
+                    <div id="chart-ads"></div>
+                </div>
+             </div>
+        </div>
+    </div>
+
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mb-12">
+        <div class="p-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center">
+            <div>
+                <h3 class="text-xl font-bold text-gray-800">💰 Vendas Fechadas - Detalhes</h3>
+            </div>
+            <span class="bg-green-100 text-green-800 text-xs font-bold px-3 py-1 rounded-full">
+                {closedSalesList.length} Vendas
+            </span>
+        </div>
+        
+        <div class="overflow-x-auto max-h-[500px] overflow-y-auto">
+            <table class="min-w-full text-sm text-left">
+                <thead class="bg-gray-100 text-gray-600 font-bold uppercase text-xs sticky top-0 z-10 shadow-sm">
+                    <tr>
+                        <th class="px-6 py-4">Cliente</th>
+                        <th class="px-6 py-4">Valor</th>
+                        <th class="px-6 py-4">Segmento</th>
+                        <th class="px-6 py-4">Origem</th>
+                        <th class="px-6 py-4">Vendedor</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    {closedSalesList.length === 0 ? (
+                        <tr><td colspan="5" class="p-8 text-center text-gray-400">Nenhuma venda neste mês.</td></tr>
+                    ) : (
+                        closedSalesList.map(venda => (
+                            <tr class="hover:bg-green-50 transition">
+                                <td class="px-6 py-4 font-bold text-gray-800">{venda.cliente}</td>
+                                <td class="px-6 py-4 font-mono font-bold text-green-700">
+                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(venda.valor)}
+                                </td>
+                                <td class="px-6 py-4"><span class="bg-blue-50 text-blue-700 px-2 py-1 rounded text-xs font-bold">{venda.segmento}</span></td>
+                                <td class="px-6 py-4 text-gray-600">{venda.origem}</td>
+                                <td class="px-6 py-4 text-gray-500 text-xs uppercase font-bold">{venda.vendedor}</td>
+                            </tr>
+                        ))
+                    )}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="chart-data" data-json={chartsJSON} class="hidden"></div>
+    
     <script>
-        // Lista EXATA de métricas para o Modelo de Importação
-        const TEMPLATE_METRICS = [
-            "Investimento",
-            "Leads",
-            "Custo por Leads",
-            "% de MQL",
-            "MQL",
-            "Custo por MQL",
-            "Conversão de Lead para Venda",
-            "Conversão de MQL para Venda",
-            "Vendas",
-            "Custo por Venda",
-            "Ticket Médio",
-            "Faturamento Total",
-            "ROAS (Total)",
-            "COM LT DE + 3 COMPRAS (66%)",
-            "ROAS LT 3"
-        ];
+        const rawData = JSON.parse(document.getElementById('chart-data').dataset.json);
+        const commonOpts = {
+            chart: { type: 'bar', height: 250, toolbar: {show: false}, fontFamily: 'inherit' },
+            colors: ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'],
+            plotOptions: { bar: { borderRadius: 3, horizontal: true } },
+            dataLabels: { enabled: false },
+            grid: { strokeDashArray: 4 }
+        };
 
-        // 1. BAIXAR MODELO ATUALIZADO
-        function downloadTemplate() {
-            // Cria os dados: Cabeçalho + Lista Fixa de Métricas
-            const ws_data = [
-                ["Métrica", "Valor"], // Cabeçalho
-                ...TEMPLATE_METRICS.map(label => [label, ""]) // Linhas
-            ];
-            
-            const ws = XLSX.utils.aoa_to_sheet(ws_data);
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, "Modelo_ROI");
-            
-            XLSX.writeFile(wb, "Modelo_Nicopel_ROI.xlsx");
-        }
+        // 1. VENDEDORES
+        const vends = Object.entries(rawData.vendedor).sort((a,b) => b[1] - a[1]);
+        new ApexCharts(document.querySelector("#chart-vendedor"), {
+            ...commonOpts,
+            chart: { type: 'bar', height: 250, toolbar: {show: false} }, 
+            plotOptions: { bar: { borderRadius: 3, horizontal: false, columnWidth: '50%' } },
+            colors: ['#8B5CF6'],
+            series: [{ name: 'Leads', data: vends.map(x => x[1]) }],
+            xaxis: { categories: vends.map(x => x[0]) }
+        }).render();
 
-        // 2. IMPORTAR EXCEL E PREENCHER O FORM
-        function handleImport(input) {
-            const file = input.files[0];
-            if (!file) return;
+        // 2. ORIGEM
+        new ApexCharts(document.querySelector("#chart-origem"), {
+            series: Object.values(rawData.origem),
+            labels: Object.keys(rawData.origem),
+            chart: { type: 'donut', height: 220 },
+            legend: { position: 'bottom', fontSize: '11px' },
+            dataLabels: { enabled: false }
+        }).render();
 
-            const reader = new FileReader();
-            
-            reader.onload = function(e) {
-                const data = new Uint8Array(e.target.result);
-                const workbook = XLSX.read(data, { type: 'array' });
-                const firstSheetName = workbook.SheetNames[0];
-                const worksheet = workbook.Sheets[firstSheetName];
-                const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+        // 3. SEGMENTO
+        const segs = Object.entries(rawData.segmento).sort((a,b) => b[1] - a[1]).slice(0, 5);
+        new ApexCharts(document.querySelector("#chart-segmento"), {
+            ...commonOpts,
+            chart: { type: 'bar', height: 220, toolbar: {show: false} },
+            series: [{ name: 'Leads', data: segs.map(x => x[1]) }],
+            xaxis: { categories: segs.map(x => x[0]) }
+        }).render();
 
-                document.getElementById('editModal').showModal();
-
-                jsonData.forEach(row => {
-                    if (row.length >= 2) {
-                        const label = row[0]; 
-                        const val = row[1];
-                        
-                        if (label && val !== undefined) {
-                            // Limpeza de string para achar o ID correto
-                            const safeLabel = label.toString().trim().replace(/\s+/g, '_');
-                            const inputId = `input_${safeLabel}`;
-                            const inputElement = document.getElementById(inputId);
-                            
-                            if (inputElement) {
-                                inputElement.value = val;
-                                inputElement.parentElement.parentElement.classList.add('ring-2', 'ring-green-400', 'rounded-lg');
-                                setTimeout(() => inputElement.parentElement.parentElement.classList.remove('ring-2', 'ring-green-400', 'rounded-lg'), 2000);
-                            }
-                        }
-                    }
-                });
-                input.value = '';
-            };
-            reader.readAsArrayBuffer(file);
-        }
-
-        window.downloadTemplate = downloadTemplate;
-        window.handleImport = handleImport;
+         // 4. ADS vs ORG
+         new ApexCharts(document.querySelector("#chart-ads"), {
+            series: [rawData.organicoVsAds.org, rawData.organicoVsAds.ads],
+            labels: ['Orgânico', 'Pago'],
+            chart: { type: 'pie', height: 200 },
+            colors: ['#10B981', '#3B82F6'],
+            legend: { position: 'right' }
+        }).render();
     </script>
 </Layout>
