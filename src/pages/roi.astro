@@ -9,13 +9,29 @@ let roiData = [];
 let errorMsg = null;
 let successMsg = null;
 
+// Configuração Visual (Ícones e Cores para cada métrica específica)
 const metricConfig = {
     "Investimento": { icon: "💸", color: "text-red-600", bg: "bg-red-50" },
-    "Faturamento Total": { icon: "💰", color: "text-green-600", bg: "bg-green-50", bold: true },
-    "ROAS": { icon: "🚀", color: "text-blue-600", bg: "bg-blue-50", bold: true },
-    "Vendas": { icon: "🤝", color: "text-emerald-600", bg: "bg-emerald-50" },
     "Leads": { icon: "👥", color: "text-gray-600", bg: "bg-gray-50" },
-    "default": { icon: "📊", color: "text-slate-600", bg: "bg-white" }
+    "Custo por Leads": { icon: "📉", color: "text-orange-600", bg: "bg-orange-50" },
+    "% de MQL": { icon: "🎯", color: "text-purple-600", bg: "bg-purple-50" },
+    "MQL": { icon: "⭐", color: "text-indigo-600", bg: "bg-indigo-50" },
+    "Custo por MQL": { icon: "💲", color: "text-orange-600", bg: "bg-orange-50" },
+    "Conversão de Lead para Venda": { icon: "🔄", color: "text-blue-500", bg: "bg-blue-50" },
+    "Conversão de MQL para Venda": { icon: "⚡", color: "text-blue-700", bg: "bg-blue-50" },
+    "Vendas": { icon: "🤝", color: "text-emerald-600", bg: "bg-emerald-50" },
+    "Custo por Venda": { icon: "🏷️", color: "text-red-500", bg: "bg-red-50" },
+    "Ticket Médio": { icon: "💳", color: "text-cyan-600", bg: "bg-cyan-50" },
+    
+    // Destaques Principais
+    "Faturamento Total": { icon: "💰", color: "text-green-700", bg: "bg-green-100", bold: true, border: "border-green-300" },
+    "ROAS (Total)": { icon: "🚀", color: "text-blue-700", bg: "bg-blue-100", bold: true, border: "border-blue-300" },
+    
+    // LT Metrics
+    "COM LT DE + 3 COMPRAS (66%)": { icon: "📦", color: "text-purple-700", bg: "bg-purple-100", bold: true },
+    "ROAS LT 3": { icon: "📈", color: "text-pink-600", bg: "bg-pink-50", bold: true },
+    
+    "default": { icon: "bar_chart", color: "text-slate-600", bg: "bg-white" }
 };
 
 // --- SALVAR DADOS (POST) ---
@@ -27,14 +43,18 @@ if (Astro.request.method === "POST") {
         const monthIndex = MONTHS.indexOf(selectedMonth);
         if (monthIndex === -1) throw new Error("Mês inválido");
 
+        // Lê a coluna A para garantir a ordem de salvamento
         const meta = await sheets.spreadsheets.values.get({
             spreadsheetId: SPREADSHEET_ID,
-            range: `'ROI'!A2:A20`
+            range: `'ROI'!A2:A30` // Lê até a linha 30 para garantir
         });
         
         const metricNames = meta.data.values ? meta.data.values.map(r => r[0]) : [];
+        
+        // Mapeia os valores enviados pelo formulário na ordem da planilha
         const newValues = metricNames.map(name => {
-            const val = formData.get(name) || "0";
+            if (!name) return [""]; // Se a linha A estiver vazia, salva vazio
+            const val = formData.get(name) || ""; // Se não mandou nada, salva vazio (não zero, pra não sujar)
             return [val]; 
         });
 
@@ -61,7 +81,7 @@ try {
 
     const response = await sheets.spreadsheets.values.batchGet({
         spreadsheetId: SPREADSHEET_ID,
-        ranges: [`'ROI'!A2:A20`, `'ROI'!${colLetter}2:${colLetter}20`]
+        ranges: [`'ROI'!A2:A30`, `'ROI'!${colLetter}2:${colLetter}30`]
     });
 
     const labels = response.data.valueRanges[0].values || [];
@@ -69,13 +89,17 @@ try {
 
     roiData = labels.map((labelRow, i) => {
         const label = labelRow[0];
+        // Se não tiver label (linha vazia na planilha), retorna null para filtrar depois
+        if (!label || label.trim() === "") return null;
+
         const val = values[i] ? values[i][0] : "-";
         const config = metricConfig[label] || metricConfig["default"];
+        
         return { label: label, value: val, ...config };
-    });
+    }).filter(item => item !== null); // Remove as linhas vazias da visualização
 
 } catch (e) {
-    errorMsg = "Certifique-se de criar a aba 'ROI' na planilha com as métricas na Coluna A.";
+    errorMsg = "Certifique-se de criar a aba 'ROI' na planilha.";
 }
 ---
 
@@ -120,16 +144,20 @@ try {
 
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-12">
         {roiData.map((item) => (
-            <div class={`p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col justify-between hover:shadow-md transition bg-white relative overflow-hidden group`}>
-                <div class={`absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition text-4xl`}>{item.icon}</div>
+            <div class={`p-6 rounded-xl shadow-sm border ${item.border ? item.border : 'border-gray-100'} flex flex-col justify-between hover:shadow-md transition bg-white relative overflow-hidden group`}>
+                <div class={`absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition text-4xl grayscale hover:grayscale-0`}>
+                    {item.icon}
+                </div>
+                
                 <div>
-                    <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">{item.label}</p>
-                    <h3 class={`text-2xl ${item.bold ? 'font-black' : 'font-bold'} ${item.color}`}>
+                    <p class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">{item.label}</p>
+                    <h3 class={`text-2xl ${item.bold ? 'font-black' : 'font-bold'} ${item.color} truncate`}>
                         {item.value}
                     </h3>
                 </div>
-                <div class={`h-1 w-full mt-4 rounded-full ${item.bg.replace('bg-', 'bg-opacity-50 ')} bg-gray-200`}>
-                    <div class={`h-1 rounded-full ${item.color.replace('text-', 'bg-')} w-1/2`}></div>
+                
+                <div class={`h-1.5 w-full mt-4 rounded-full ${item.bg} bg-opacity-50`}>
+                    <div class={`h-1.5 rounded-full ${item.color.replace('text-', 'bg-')} w-1/2 opacity-70`}></div>
                 </div>
             </div>
         ))}
@@ -138,49 +166,73 @@ try {
     <dialog id="editModal" class="modal rounded-xl shadow-2xl p-0 w-full max-w-2xl backdrop:bg-gray-900/50">
         <div class="bg-white">
             <div class="p-6 border-b border-gray-200 flex justify-between items-center bg-slate-50">
-                <h3 class="text-xl font-bold text-gray-800">Editar Dados de {selectedMonth}</h3>
+                <h3 class="text-xl font-bold text-gray-800">Editar Métricas - {selectedMonth}</h3>
                 <button onclick="document.getElementById('editModal').close()" class="text-gray-400 hover:text-gray-600 font-bold text-xl">&times;</button>
             </div>
             
-            <form method="POST" class="p-6" id="roiForm">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[60vh] overflow-y-auto pr-2">
+            <form method="POST" class="p-6">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
                     {roiData.map((item) => (
-                        <div>
-                            <label class="block text-xs font-bold text-gray-500 uppercase mb-1">{item.label}</label>
-                            <input 
-                                type="text" 
-                                name={item.label} 
-                                id={`input_${item.label.replace(/\s+/g, '_')}`}
-                                value={item.value === '-' ? '' : item.value} 
-                                class="w-full border border-gray-300 rounded p-2 focus:ring-2 focus:ring-blue-500 outline-none font-medium text-gray-700"
-                                placeholder="0,00"
-                            >
+                        <div class="relative">
+                            <label class="block text-[10px] font-bold text-gray-500 uppercase mb-1">{item.label}</label>
+                            <div class="relative">
+                                <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400 pointer-events-none">
+                                    {item.label.includes('%') || item.label.includes('Conversão') ? '%' : (item.label.includes('ROAS') ? 'x' : 'R$')}
+                                </span>
+                                <input 
+                                    type="text" 
+                                    name={item.label} 
+                                    id={`input_${item.label.replace(/\s+/g, '_')}`}
+                                    value={item.value === '-' ? '' : item.value} 
+                                    class="w-full border border-gray-300 rounded-lg p-2.5 pl-8 focus:ring-2 focus:ring-blue-500 outline-none font-medium text-gray-700 text-sm"
+                                    placeholder="0,00"
+                                >
+                            </div>
                         </div>
                     ))}
                 </div>
                 
                 <div class="mt-6 pt-4 border-t border-gray-100 flex justify-end gap-3">
-                    <button type="button" onclick="document.getElementById('editModal').close()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-bold transition">Cancelar</button>
-                    <button type="submit" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold shadow-lg transition transform active:scale-95">Salvar Dados</button>
+                    <button type="button" onclick="document.getElementById('editModal').close()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-bold transition text-sm">Cancelar</button>
+                    <button type="submit" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold shadow-lg transition transform active:scale-95 text-sm">Salvar Dados</button>
                 </div>
             </form>
         </div>
     </dialog>
 
-    <script define:vars={{ roiData }}>
-        // 1. BAIXAR MODELO
+    <script>
+        // Lista EXATA de métricas para o Modelo de Importação
+        const TEMPLATE_METRICS = [
+            "Investimento",
+            "Leads",
+            "Custo por Leads",
+            "% de MQL",
+            "MQL",
+            "Custo por MQL",
+            "Conversão de Lead para Venda",
+            "Conversão de MQL para Venda",
+            "Vendas",
+            "Custo por Venda",
+            "Ticket Médio",
+            "Faturamento Total",
+            "ROAS (Total)",
+            "COM LT DE + 3 COMPRAS (66%)",
+            "ROAS LT 3"
+        ];
+
+        // 1. BAIXAR MODELO ATUALIZADO
         function downloadTemplate() {
-            // Cria os dados: Cabeçalho + Lista de Métricas vazias
+            // Cria os dados: Cabeçalho + Lista Fixa de Métricas
             const ws_data = [
                 ["Métrica", "Valor"], // Cabeçalho
-                ...roiData.map(item => [item.label, ""]) // Linhas
+                ...TEMPLATE_METRICS.map(label => [label, ""]) // Linhas
             ];
             
             const ws = XLSX.utils.aoa_to_sheet(ws_data);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "Modelo_ROI");
             
-            XLSX.writeFile(wb, "Modelo_Importacao_ROI.xlsx");
+            XLSX.writeFile(wb, "Modelo_Nicopel_ROI.xlsx");
         }
 
         // 2. IMPORTAR EXCEL E PREENCHER O FORM
@@ -193,46 +245,36 @@ try {
             reader.onload = function(e) {
                 const data = new Uint8Array(e.target.result);
                 const workbook = XLSX.read(data, { type: 'array' });
-                
-                // Pega a primeira aba
                 const firstSheetName = workbook.SheetNames[0];
                 const worksheet = workbook.Sheets[firstSheetName];
-                
-                // Converte para JSON (Array de Arrays)
                 const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
 
-                // Abre o modal para o usuário conferir
                 document.getElementById('editModal').showModal();
 
-                // Varre as linhas do Excel e preenche os inputs
                 jsonData.forEach(row => {
                     if (row.length >= 2) {
-                        const label = row[0]; // Coluna A (Nome da Métrica)
-                        const val = row[1];   // Coluna B (Valor)
+                        const label = row[0]; 
+                        const val = row[1];
                         
-                        // Tenta achar o input com esse nome
                         if (label && val !== undefined) {
-                            const inputId = `input_${label.toString().trim().replace(/\s+/g, '_')}`;
+                            // Limpeza de string para achar o ID correto
+                            const safeLabel = label.toString().trim().replace(/\s+/g, '_');
+                            const inputId = `input_${safeLabel}`;
                             const inputElement = document.getElementById(inputId);
                             
                             if (inputElement) {
                                 inputElement.value = val;
-                                // Efeito visual para mostrar que foi preenchido
-                                inputElement.classList.add('bg-green-50', 'border-green-300');
-                                setTimeout(() => inputElement.classList.remove('bg-green-50', 'border-green-300'), 2000);
+                                inputElement.parentElement.parentElement.classList.add('ring-2', 'ring-green-400', 'rounded-lg');
+                                setTimeout(() => inputElement.parentElement.parentElement.classList.remove('ring-2', 'ring-green-400', 'rounded-lg'), 2000);
                             }
                         }
                     }
                 });
-                
-                // Limpa o input file para poder subir o mesmo arquivo de novo se quiser
                 input.value = '';
             };
-
             reader.readAsArrayBuffer(file);
         }
 
-        // Torna as funções globais para o botão acessar
         window.downloadTemplate = downloadTemplate;
         window.handleImport = handleImport;
     </script>
