@@ -12,36 +12,47 @@ if (Astro.request.method === "POST") {
     const sheets = await getAuthSheets();
     
     const targetMonth = data.get('target_month') || defaultMonth;
-    
-    // Proteção: Acha o nome real da aba
     const realSheetName = await findRealSheetName(sheets, targetMonth);
+    
     if (!realSheetName) throw new Error(`A aba "${targetMonth}" não existe na planilha.`);
 
+    // LÓGICA DE TRÁFEGO PAGO
+    let origemFinal = data.get('origem');
+    const tipoTrafego = data.get('tipo_trafego');
+    
+    // Se for Pago e não for LP (que já é pago por natureza), adiciona a tag ADS
+    if (tipoTrafego === 'PAGO' && !origemFinal.includes('LP')) {
+        origemFinal = `${origemFinal} ADS`;
+    }
+
+    // --- MAPEAMENTO (A-O) ---
     const row = [
-      data.get('nome_cliente'),
-      data.get('data'),
-      data.get('origem'),       // Agora vem do Select (RD, Orgânico...)
-      data.get('numero'),
-      data.get('seguimento'),
-      data.get('quantidade'),
-      data.get('onde'),         // Agora vem do Select (Instagram, Site...)
-      data.get('qualificado'),
-      data.get('venda'),
-      data.get('motivo'),
-      data.get('delegado'),     // Agora vem do Select (Clodoaldo, Michele...)
-      data.get('valor')
+      data.get('nome_cliente'),           // A [0]
+      data.get('data'),                   // B [1]
+      data.get('rd_check') ? "TRUE" : "FALSE", // C [2]
+      origemFinal,                        // D [3] (Origem ajustada)
+      data.get('numero'),                 // E [4]
+      data.get('seguimento'),             // F [5]
+      data.get('produto'),                // G [6]
+      data.get('quantidade'),             // H [7]
+      data.get('qualificado'),            // I [8]
+      data.get('motivo'),                 // J [9]
+      data.get('delegado'),               // K [10]
+      data.get('status_guru'),            // L [11]
+      data.get('pipefy_check') ? "TRUE" : "FALSE", // M [12]
+      data.get('venda'),                  // N [13]
+      data.get('valor')                   // O [14]
     ];
 
     await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
-      range: `'${realSheetName}'!A:L`,
+      range: `'${realSheetName}'!A:O`,
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: [row] },
     });
 
     success = true;
   } catch (e) {
-    console.error("Erro ao salvar:", e);
     error = "Erro ao salvar: " + e.message;
   }
 }
@@ -49,138 +60,194 @@ if (Astro.request.method === "POST") {
 const today = new Date().toISOString().split('T')[0];
 ---
 
-<Layout title="Adicionar Lead">
-    <div class="max-w-5xl mx-auto bg-white p-8 rounded-xl shadow-sm border border-gray-200">
-        <div class="mb-6 border-b pb-4 flex justify-between items-center">
+<Layout title="Novo Lead">
+    <div class="max-w-5xl mx-auto">
+        <div class="flex justify-between items-center mb-8 border-b border-slate-200 pb-4">
             <div>
-                <h2 class="text-2xl font-bold text-gray-800">Novo Lead</h2>
-                <p class="text-sm text-gray-500">Preencha os dados do cliente</p>
+                <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Cadastro de Lead</h1>
+                <p class="text-sm text-slate-500">Novo formulário padronizado.</p>
             </div>
-            <a href="/" class="text-sm font-bold text-gray-500 hover:text-gray-800">Cancelar</a>
+            <a href="/" class="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-300 rounded hover:bg-slate-50 transition">Cancelar</a>
         </div>
 
-        {success && (
-            <div class="bg-green-50 text-green-800 p-4 rounded mb-6 flex items-center gap-2 font-bold border border-green-200 animate-pulse">
-                ✅ Lead salvo com sucesso! <a href="/" class="underline ml-2">Voltar ao Dashboard</a>
-            </div>
-        )}
+        {success && <div class="bg-emerald-50 border border-emerald-200 text-emerald-800 p-4 rounded mb-6 font-bold flex items-center gap-2">✅ Sucesso! <a href="/" class="underline">Voltar</a></div>}
+        {error && <div class="bg-red-50 border border-red-200 text-red-800 p-4 rounded mb-6 font-bold">{error}</div>}
 
-        {error && (
-            <div class="bg-red-50 text-red-800 p-4 rounded mb-6 font-bold border border-red-200">
-                ❌ {error}
-            </div>
-        )}
-
-        <form method="POST" class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <form method="POST" class="bg-white border border-slate-200 rounded shadow-sm overflow-hidden">
             
-            <div class="md:col-span-3 bg-slate-50 p-4 rounded border border-slate-200 flex items-center gap-3">
-                <span class="font-bold text-slate-800 text-sm uppercase">📅 Mês de Registro:</span>
-                <select name="target_month" class="bg-white border border-slate-300 rounded text-sm py-1.5 px-3 font-medium outline-none focus:border-blue-500">
-                    {MONTHS.map(m => <option value={m} selected={m === defaultMonth}>{m}</option>)}
-                </select>
+            <div class="p-6 bg-slate-50 border-b border-slate-200">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <div class="md:col-span-1">
+                        <label class="label-form">Mês</label>
+                        <select name="target_month" class="input-form">
+                            {MONTHS.map(m => <option value={m} selected={m === defaultMonth}>{m}</option>)}
+                        </select>
+                    </div>
+                    <div class="md:col-span-2">
+                        <label class="label-form">Nome do Cliente *</label>
+                        <input name="nome_cliente" required type="text" class="input-form">
+                    </div>
+                    <div class="md:col-span-1">
+                        <label class="label-form">Data *</label>
+                        <input name="data" type="date" value={today} class="input-form">
+                    </div>
+
+                    <div class="md:col-span-2">
+                        <label class="label-form">Canal de Origem</label>
+                        <select name="origem" class="input-form font-bold text-slate-700" required>
+                            <option value="">SELECIONE...</option>
+                            <option value="INSTAGRAM">INSTAGRAM</option>
+                            <option value="FORMS INSTAGRAM">FORMS INSTAGRAM</option>
+                            <option value="SITE">SITE</option>
+                            <option value="WHATSAPP">WHATSAPP</option>
+                            <option value="LP META">LP META</option>
+                            <option value="LP GOOGLE">LP GOOGLE</option>
+                            <option value="INDICAÇÃO">INDICAÇÃO</option>
+                            <option value="RD STATION">RD STATION</option>
+                            <option value="E-MAIL MKT">E-MAIL MKT</option>
+                        </select>
+                    </div>
+                    <div class="md:col-span-2">
+                        <label class="label-form text-blue-600">Tipo de Tráfego</label>
+                        <div class="flex gap-4 mt-2">
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="radio" name="tipo_trafego" value="ORGANICO" checked class="w-4 h-4 text-slate-900 focus:ring-slate-500">
+                                <span class="text-sm font-medium text-slate-700">Orgânico</span>
+                            </label>
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="radio" name="tipo_trafego" value="PAGO" class="w-4 h-4 text-blue-600 focus:ring-blue-500">
+                                <span class="text-sm font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">Tráfego Pago (Ads)</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
             </div>
 
-            <div class="md:col-span-2">
-                <label class="label-form">Nome do Cliente / Empresa *</label>
-                <input name="nome_cliente" required type="text" class="input-form">
-            </div>
-            <div>
-                <label class="label-form">Data *</label>
-                <input name="data" type="date" value={today} class="input-form">
+            <div class="p-6 border-b border-slate-200">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div>
+                        <label class="label-form">Telefone</label>
+                        <input name="numero" type="text" class="input-form" placeholder="(00) 00000-0000">
+                    </div>
+                    
+                    <div>
+                        <label class="label-form">Segmento</label>
+                        <input name="seguimento" type="text" list="list-seg" class="input-form" placeholder="Selecione...">
+                        <datalist id="list-seg">
+                            <option value="Pote"></option>
+                            <option value="Copo"></option>
+                            <option value="Pizza"></option>
+                            <option value="Cx Sorvete"></option>
+                            <option value="Projeto Especial"></option>
+                        </datalist>
+                    </div>
+                    
+                    <div class="md:col-span-2">
+                        <label class="label-form">Produto</label>
+                        <input name="produto" type="text" list="list-prod" class="input-form" placeholder="Busque o produto...">
+                        <datalist id="list-prod">
+                            <option value="Projeto Especial"/>
+                            <option value="Copo 100ml"/><option value="Copo 200ml"/><option value="Copo 400ml"/><option value="Copo 500ml"/>
+                            <option value="Pote 100ml"/><option value="Pote 120ml"/><option value="Pote 150ml"/><option value="Pote 180ml"/>
+                            <option value="Pote 240ml"/><option value="Pote 360ml"/><option value="Pote 480ml"/><option value="Pote 500ml"/><option value="Pote 1000ml"/>
+                            <option value="Pizza Oitavada"/><option value="Pizza Quadrada"/><option value="Pizza Sextavada"/>
+                            <option value="Caixa de Sorvete 5L"/><option value="Caixa de Sorvete 7L"/><option value="Caixa de Sorvete 10L"/>
+                        </datalist>
+                    </div>
+
+                    <div>
+                        <label class="label-form">Qtd. Estimada</label>
+                        <select name="quantidade" class="input-form">
+                            <option value="">Selecione...</option>
+                            <option value="Mínimo">Mínimo</option>
+                            <option value="5 mil">5 mil</option>
+                            <option value="10 mil">10 mil</option>
+                            <option value="15 mil">15 mil</option>
+                            <option value="30 mil">30 mil</option>
+                            <option value="50 mil">50 mil</option>
+                        </select>
+                    </div>
+                </div>
             </div>
 
-            <div>
-                <label class="label-form">WhatsApp / Contato</label>
-                <input name="numero" type="text" class="input-form">
-            </div>
-            <div>
-                <label class="label-form">Segmento</label>
-                <input name="seguimento" type="text" list="list-seg" class="input-form" placeholder="Ex: Restaurante">
-                <datalist id="list-seg">
-                    <option value="Restaurante"></option>
-                    <option value="Mercado"></option>
-                    <option value="Indústria"></option>
-                    <option value="Varejo"></option>
-                    <option value="Serviços"></option>
-                    <option value="Sorveteria"></option>
-                    <option value="Pizzaria"></option>
-                </datalist>
-            </div>
-            
-            <div>
-                <label class="label-form text-blue-600">Origem (Fonte)</label>
-                <select name="origem" class="input-form bg-blue-50/30 border-blue-200">
-                    <option value="RD">RD</option>
-                    <option value="Orgânico">Orgânico</option>
-                    <option value="Outros">Outros</option>
-                </select>
-            </div>
-
-            <div>
-                <label class="label-form">Qtd. Embalagens</label>
-                <input name="quantidade" type="number" class="input-form">
-            </div>
-            
-            <div class="md:col-span-2">
-                <label class="label-form text-blue-600">Onde nos encontrou? (Detalhe)</label>
-                <select name="onde" class="input-form bg-blue-50/30 border-blue-200">
-                    <option value="">-- Selecione --</option>
-                    <option value="Instagram">Instagram</option>
-                    <option value="Site">Site</option>
-                    <option value="WhatsApp">WhatsApp</option>
-                    <option value="LP Meta">LP Meta</option>
-                    <option value="LP Google">LP Google</option>
-                    <option value="Indicação">Indicação</option>
-                    <option value="Logo em baixo do Pote e Copo">Logo em baixo do Pote e Copo</option>
-                    <option value="Já conhece a empresa">Já conhece a empresa</option>
-                    <option value="E-mail MKT">E-mail MKT</option>
-                </select>
+            <div class="p-6 border-b border-slate-200 bg-slate-50/50">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <div>
+                        <label class="label-form">Qualificado?</label>
+                        <select name="qualificado" class="input-form">
+                            <option>SIM</option>
+                            <option>NÃO</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="label-form">Delegado Para</label>
+                        <select name="delegado" class="input-form">
+                            <option value="">-- Selecione --</option>
+                            <option value="Clodoaldo">Clodoaldo</option>
+                            <option value="Michele">Michele</option>
+                            <option value="Angela">Angela</option>
+                            <option value="Joelma">Joelma</option>
+                            <option value="Diretoria">Diretoria</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="label-form">Status no Guru</label>
+                        <select name="status_guru" class="input-form">
+                            <option>PRIMEIRO CONTATO</option>
+                            <option>EM NEGOCIAÇÃO</option>
+                            <option>AGUARDANDO RETORNO</option>
+                            <option>PERDIDO</option>
+                            <option>VENDA FECHADA</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="label-form">Motivo (se Não)</label>
+                        <input name="motivo" type="text" class="input-form" placeholder="Preço, Frete...">
+                    </div>
+                </div>
             </div>
 
-            <div>
-                <label class="label-form text-purple-600">Delegado Para</label>
-                <select name="delegado" class="input-form bg-purple-50/30 border-purple-200">
-                    <option value="">-- Selecione --</option>
-                    <option value="Clodoaldo">Clodoaldo</option>
-                    <option value="Michele">Michele</option>
-                    <option value="Angela">Angela</option>
-                    <option value="Joelma">Joelma</option>
-                </select>
-            </div>
-            <div>
-                <label class="label-form">Lead Qualificado?</label>
-                <select name="qualificado" class="input-form">
-                    <option>Sim</option>
-                    <option>Não</option>
-                </select>
-            </div>
-            <div>
-                <label class="label-form">Venda Fechada?</label>
-                <select name="venda" class="input-form">
-                    <option>Não</option>
-                    <option>Sim</option>
-                </select>
+            <div class="p-6 bg-slate-100">
+                <div class="grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
+                    
+                    <div class="md:col-span-3 flex flex-col gap-3">
+                        <label class="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded cursor-pointer hover:border-slate-400 transition">
+                            <input type="checkbox" name="rd_check" class="w-4 h-4 text-slate-800 rounded focus:ring-slate-500">
+                            <span class="text-sm font-medium text-slate-700">Lead no RD Station</span>
+                        </label>
+                        <label class="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded cursor-pointer hover:border-slate-400 transition">
+                            <input type="checkbox" name="pipefy_check" class="w-4 h-4 text-slate-800 rounded focus:ring-slate-500">
+                            <span class="text-sm font-medium text-slate-700">Add no Pipefy</span>
+                        </label>
+                    </div>
+
+                    <div class="md:col-span-9 grid grid-cols-2 gap-6 pl-0 md:pl-6 border-l border-slate-200">
+                        <div>
+                            <label class="label-form text-slate-700">Venda Fechada?</label>
+                            <select name="venda" class="input-form font-medium">
+                                <option value="">Em aberto</option>
+                                <option value="Sim">Sim (Venda Realizada)</option>
+                                <option value="Não">Não (Perdido)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="label-form text-slate-700">Valor do Pedido (R$)</label>
+                            <input name="valor" type="text" class="input-form font-mono text-right font-bold text-slate-800" placeholder="0,00">
+                        </div>
+                    </div>
+                </div>
             </div>
 
-            <div class="md:col-span-2">
-                <label class="label-form">Motivo (Caso NÃO feche)</label>
-                <input name="motivo" type="text" class="input-form" placeholder="Ex: Preço, Prazo...">
-            </div>
-            <div>
-                <label class="label-form">Valor do Pedido (R$)</label>
-                <input name="valor" type="text" class="input-form font-mono text-right text-green-700 font-bold" placeholder="0,00">
-            </div>
-
-            <div class="md:col-span-3 mt-4 pt-4 border-t">
-                <button type="submit" class="w-full bg-slate-900 text-white font-bold py-4 rounded-lg hover:bg-slate-800 transition shadow-lg transform active:scale-[0.99]">
-                    💾 SALVAR NOVO LEAD
+            <div class="px-6 py-4 bg-white border-t border-slate-200 flex justify-end">
+                <button type="submit" class="bg-slate-900 text-white px-8 py-3 rounded font-bold text-sm hover:bg-slate-800 transition shadow-sm flex items-center gap-2">
+                    <span>💾</span> REGISTRAR LEAD
                 </button>
             </div>
         </form>
     </div>
-    
+
     <style>
-        .label-form { @apply block text-xs font-bold text-gray-500 uppercase mb-1.5 tracking-wide; }
-        .input-form { @apply w-full bg-gray-50 border border-gray-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition hover:bg-white; }
+        .label-form { @apply block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wide; }
+        .input-form { @apply w-full border border-slate-300 rounded px-3 py-2 text-sm text-slate-700 focus:ring-2 focus:ring-slate-500 focus:border-slate-500 outline-none transition bg-white; }
     </style>
 </Layout>

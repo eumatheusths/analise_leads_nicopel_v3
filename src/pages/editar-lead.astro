@@ -1,8 +1,7 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import { getAuthSheets, SPREADSHEET_ID, updateRow } from '../lib/sheets';
+import { getAuthSheets, SPREADSHEET_ID } from '../lib/sheets';
 
-// Agora recebemos o nome exato da aba pela URL (param 'sheet')
 const sheetName = Astro.url.searchParams.get('sheet');
 const index = Astro.url.searchParams.get('index');
 
@@ -15,14 +14,13 @@ if (sheetName && index !== null) {
     try {
         const sheets = await getAuthSheets();
         const realRow = parseInt(index) + 2; 
-        // Usa o sheetName que veio da URL, pois já é o "real" e usa aspas para proteger
         const res = await sheets.spreadsheets.values.get({
             spreadsheetId: SPREADSHEET_ID, 
-            range: `'${sheetName}'!A${realRow}:L${realRow}`
+            range: `'${sheetName}'!A${realRow}:O${realRow}`
         });
         data = res.data.values ? res.data.values[0] : [];
     } catch (e) {
-        error = "Erro ao carregar lead: " + e.message;
+        error = "Erro ao carregar: " + e.message;
     }
 }
 
@@ -30,23 +28,40 @@ if (sheetName && index !== null) {
 if (Astro.request.method === "POST") {
     try {
         const fd = await Astro.request.formData();
+        
+        let origemFinal = fd.get('origem');
+        const tipoTrafego = fd.get('tipo_trafego');
+        
+        // Mantém a lógica: Se for Pago e não for LP, adiciona ADS
+        if (tipoTrafego === 'PAGO' && !origemFinal.includes('LP') && !origemFinal.includes('ADS')) {
+            origemFinal = `${origemFinal} ADS`;
+        }
+
         const updated = [
-            fd.get('nome'), fd.get('data'), fd.get('origem'), fd.get('numero'),
-            fd.get('seguimento'), fd.get('qtd'), fd.get('onde'), fd.get('qualificado'),
-            fd.get('venda'), fd.get('motivo'), fd.get('delegado'), fd.get('valor')
+            fd.get('nome'),           // A
+            fd.get('data'),           // B
+            fd.get('rd_check') ? "TRUE" : "FALSE", // C
+            origemFinal,              // D
+            fd.get('numero'),         // E
+            fd.get('seguimento'),     // F
+            fd.get('produto'),        // G
+            fd.get('quantidade'),     // H
+            fd.get('qualificado'),    // I
+            fd.get('motivo'),         // J
+            fd.get('delegado'),       // K
+            fd.get('status_guru'),    // L
+            fd.get('pipefy_check') ? "TRUE" : "FALSE", // M
+            fd.get('venda'),          // N
+            fd.get('valor')           // O
         ];
         
-        // Atualiza usando o nome da aba que veio da URL (hidden input)
         const targetSheet = fd.get('target_sheet');
-        
-        // Função de update local para garantir as aspas no nome da aba
         const sheets = await getAuthSheets();
         const rowIndex = parseInt(index) + 2;
-        const range = `'${targetSheet}'!A${rowIndex}:L${rowIndex}`; // Aspas adicionadas aqui!
         
         await sheets.spreadsheets.values.update({
             spreadsheetId: SPREADSHEET_ID,
-            range: range,
+            range: `'${targetSheet}'!A${rowIndex}:O${rowIndex}`,
             valueInputOption: 'USER_ENTERED',
             requestBody: { values: [updated] },
         });
@@ -59,74 +74,186 @@ if (Astro.request.method === "POST") {
 }
 
 const v = (i) => data[i] || '';
+const isChecked = (i) => {
+    const val = (data[i] || '').toUpperCase();
+    return val === 'TRUE' || val === 'VERDADEIRO' || val === 'SIM';
+};
+
+// Lógica para detectar se já é ADS no formulário de edição
+const rawOrigem = v(3);
+const isAds = rawOrigem.includes('ADS') || rawOrigem.includes('LP');
+const cleanOrigem = rawOrigem.replace(' ADS', '').trim();
 ---
 
 <Layout title="Editar Lead">
-    <div class="max-w-4xl mx-auto bg-white p-8 rounded-xl shadow-lg border border-gray-200 mt-4">
-        <div class="flex justify-between items-center mb-6 border-b pb-4">
+    <div class="max-w-5xl mx-auto">
+        <div class="flex justify-between items-center mb-8 border-b border-slate-200 pb-4">
             <div>
-                <h2 class="text-xl font-bold text-gray-800">Editando Lead</h2>
-                <p class="text-xs text-gray-500 uppercase font-bold">Aba: {sheetName}</p>
+                <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Editar Lead</h1>
+                <p class="text-sm text-slate-500">Editando registro em: <strong class="text-slate-800">{sheetName}</strong></p>
             </div>
-            <a href="/editar" class="text-sm font-bold text-gray-500 hover:text-gray-800 px-3 py-2 rounded hover:bg-gray-100 transition">← Voltar</a>
+            <a href="/editar" class="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-300 rounded hover:bg-slate-50 transition">← Voltar</a>
         </div>
 
-        {success && <div class="bg-green-100 text-green-800 p-3 rounded mb-4 font-bold border border-green-200">✅ Dados atualizados com sucesso!</div>}
-        {error && <div class="bg-red-100 text-red-800 p-3 rounded mb-4 font-bold border border-red-200">❌ {error}</div>}
+        {success && <div class="bg-emerald-50 border border-emerald-200 text-emerald-800 p-4 rounded mb-6 font-bold flex items-center gap-2">✅ Dados atualizados!</div>}
+        {error && <div class="bg-red-50 border border-red-200 text-red-800 p-4 rounded mb-6 font-bold">{error}</div>}
 
-        <form method="POST" class="grid grid-cols-1 md:grid-cols-2 gap-5">
-            <!-- Campo Oculto para manter o nome da aba -->
+        <form method="POST" class="bg-white border border-slate-200 rounded shadow-sm overflow-hidden">
             <input type="hidden" name="target_sheet" value={sheetName}>
 
-            <div class="col-span-2">
-                <label class="lbl">Nome do Cliente / Empresa</label>
-                <input name="nome" value={v(0)} class="inp font-bold text-gray-800">
-            </div>
-            
-            <div><label class="lbl">Data</label><input type="date" name="data" value={v(1)} class="inp"></div>
-            <div><label class="lbl">Origem</label>
-                <select name="origem" class="inp">
-                    <option selected={v(2) === 'Google Ads'}>Google Ads</option>
-                    <option selected={v(2) === 'Instagram'}>Instagram</option>
-                    <option selected={v(2) === 'Indicação'}>Indicação</option>
-                    <option selected={v(2) === 'Site Orgânico'}>Site Orgânico</option>
-                    <option selected={!['Google Ads','Instagram','Indicação','Site Orgânico'].includes(v(2))}>Outros</option>
-                </select>
-            </div>
-            
-            <div><label class="lbl">WhatsApp / Contato</label><input name="numero" value={v(3)} class="inp"></div>
-            <div><label class="lbl">Segmento</label><input name="seguimento" value={v(4)} class="inp"></div>
-            
-            <div><label class="lbl">Qtd Embalagens</label><input name="qtd" value={v(5)} class="inp"></div>
-            <div><label class="lbl">Onde encontrou</label><input name="onde" value={v(6)} class="inp"></div>
-            
-            <div class="bg-gray-50 p-3 rounded border">
-                <label class="lbl text-blue-600">Lead Qualificado?</label>
-                <select name="qualificado" class="inp bg-white">
-                    <option selected={v(7) === 'Sim'}>Sim</option>
-                    <option selected={v(7) === 'Não'}>Não</option>
-                </select>
-            </div>
-            <div class="bg-gray-50 p-3 rounded border">
-                <label class="lbl text-green-600">Venda Fechada?</label>
-                <select name="venda" class="inp bg-white">
-                    <option selected={v(8) === 'Sim'}>Sim</option>
-                    <option selected={v(8) === 'Não'}>Não</option>
-                </select>
-            </div>
-            
-            <div class="col-span-2"><label class="lbl">Motivo (se não fechou)</label><input name="motivo" value={v(9)} class="inp"></div>
-            
-            <div><label class="lbl">Delegado Para</label><input name="delegado" value={v(10)} class="inp"></div>
-            <div><label class="lbl">Valor (R$)</label><input name="valor" value={v(11)} class="inp text-right font-mono font-bold text-green-700"></div>
+            <div class="p-6 bg-slate-50 border-b border-slate-200">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <div class="md:col-span-3">
+                        <label class="label-form">Nome do Cliente *</label>
+                        <input name="nome" value={v(0)} required class="input-form font-bold text-slate-900">
+                    </div>
+                    <div class="md:col-span-1">
+                        <label class="label-form">Data *</label>
+                        <input type="date" name="data" value={v(1)} class="input-form">
+                    </div>
 
-            <div class="col-span-2 mt-4 pt-4 border-t">
-                <button class="w-full bg-blue-600 text-white py-4 rounded-lg font-bold hover:bg-blue-700 transition shadow-lg">💾 SALVAR ALTERAÇÕES</button>
+                    <div class="md:col-span-2">
+                        <label class="label-form">Canal de Origem</label>
+                        <select name="origem" class="input-form font-bold text-slate-700">
+                            {['INSTAGRAM','FORMS INSTAGRAM','SITE','WHATSAPP','LP META','LP GOOGLE','INDICAÇÃO','RD STATION','E-MAIL MKT','ORGÂNICO','OUTROS'].map(opt => (
+                                <option selected={cleanOrigem === opt} value={opt}>{opt}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div class="md:col-span-2">
+                        <label class="label-form text-blue-600">Tipo de Tráfego</label>
+                        <div class="flex gap-4 mt-2">
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="radio" name="tipo_trafego" value="ORGANICO" checked={!isAds} class="w-4 h-4 text-slate-900 focus:ring-slate-500">
+                                <span class="text-sm font-medium text-slate-700">Orgânico</span>
+                            </label>
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="radio" name="tipo_trafego" value="PAGO" checked={isAds} class="w-4 h-4 text-blue-600 focus:ring-blue-500">
+                                <span class="text-sm font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">Tráfego Pago (Ads)</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="p-6 border-b border-slate-200">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div>
+                        <label class="label-form">Telefone</label>
+                        <input name="numero" value={v(4)} class="input-form">
+                    </div>
+                    
+                    <div>
+                        <label class="label-form">Segmento</label>
+                        <input name="seguimento" value={v(5)} list="list-seg" class="input-form">
+                        <datalist id="list-seg">
+                            <option value="Pote"></option>
+                            <option value="Copo"></option>
+                            <option value="Pizza"></option>
+                            <option value="Cx Sorvete"></option>
+                            <option value="Projeto Especial"></option>
+                        </datalist>
+                    </div>
+                    
+                    <div class="md:col-span-2">
+                        <label class="label-form">Produto</label>
+                        <input name="produto" value={v(6)} list="list-prod" class="input-form">
+                        <datalist id="list-prod">
+                            <option value="Projeto Especial"/>
+                            <option value="Copo 100ml"/><option value="Copo 200ml"/><option value="Copo 400ml"/><option value="Copo 500ml"/>
+                            <option value="Pote 100ml"/><option value="Pote 120ml"/><option value="Pote 150ml"/><option value="Pote 180ml"/>
+                            <option value="Pote 240ml"/><option value="Pote 360ml"/><option value="Pote 480ml"/><option value="Pote 500ml"/><option value="Pote 1000ml"/>
+                            <option value="Pizza Oitavada"/><option value="Pizza Quadrada"/><option value="Pizza Sextavada"/>
+                            <option value="Caixa de Sorvete 5L"/><option value="Caixa de Sorvete 7L"/><option value="Caixa de Sorvete 10L"/>
+                        </datalist>
+                    </div>
+
+                    <div>
+                        <label class="label-form">Qtd. Estimada</label>
+                        <select name="quantidade" class="input-form">
+                            <option value="">Selecione...</option>
+                            {['Mínimo','5 mil','10 mil','15 mil','30 mil','50 mil'].map(opt => (
+                                <option selected={v(7) === opt} value={opt}>{opt}</option>
+                            ))}
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="p-6 border-b border-slate-200 bg-slate-50/50">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <div>
+                        <label class="label-form">Qualificado?</label>
+                        <select name="qualificado" class="input-form">
+                            <option selected={v(8) === 'SIM'}>SIM</option>
+                            <option selected={v(8) === 'NÃO'}>NÃO</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="label-form">Delegado Para</label>
+                        <select name="delegado" class="input-form">
+                            <option value="">-- Selecione --</option>
+                            {['Clodoaldo','Michele','Angela','Joelma','Diretoria'].map(opt => (
+                                <option selected={v(10) === opt} value={opt}>{opt}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="label-form">Status no Guru</label>
+                        <select name="status_guru" class="input-form">
+                            {['PRIMEIRO CONTATO','EM NEGOCIAÇÃO','AGUARDANDO RETORNO','PERDIDO','VENDA FECHADA'].map(opt => (
+                                <option selected={v(11) === opt} value={opt}>{opt}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="label-form">Motivo (se Não)</label>
+                        <input name="motivo" value={v(9)} class="input-form">
+                    </div>
+                </div>
+            </div>
+
+            <div class="p-6 bg-slate-100">
+                <div class="grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
+                    
+                    <div class="md:col-span-3 flex flex-col gap-3">
+                        <label class="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded cursor-pointer hover:border-slate-400 transition">
+                            <input type="checkbox" name="rd_check" checked={isChecked(2)} class="w-4 h-4 text-slate-800 rounded focus:ring-slate-500">
+                            <span class="text-sm font-medium text-slate-700">Lead no RD Station</span>
+                        </label>
+                        <label class="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded cursor-pointer hover:border-slate-400 transition">
+                            <input type="checkbox" name="pipefy_check" checked={isChecked(12)} class="w-4 h-4 text-slate-800 rounded focus:ring-slate-500">
+                            <span class="text-sm font-medium text-slate-700">Add no Pipefy</span>
+                        </label>
+                    </div>
+
+                    <div class="md:col-span-9 grid grid-cols-2 gap-6 pl-0 md:pl-6 border-l border-slate-200">
+                        <div>
+                            <label class="label-form text-slate-700">Venda Fechada?</label>
+                            <select name="venda" class="input-form font-medium">
+                                <option value="">Em aberto</option>
+                                <option selected={v(13) === 'Sim'} value="Sim">Sim (Venda Realizada)</option>
+                                <option selected={v(13) === 'Não'} value="Não">Não (Perdido)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="label-form text-slate-700">Valor do Pedido (R$)</label>
+                            <input name="valor" value={v(14)} class="input-form font-mono text-right font-bold text-slate-800">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="px-6 py-4 bg-white border-t border-slate-200 flex justify-end">
+                <button type="submit" class="bg-slate-900 text-white px-8 py-3 rounded font-bold text-sm hover:bg-slate-800 transition shadow-sm flex items-center gap-2">
+                    <span>💾</span> SALVAR ALTERAÇÕES
+                </button>
             </div>
         </form>
     </div>
+
     <style>
-        .lbl { @apply block text-xs font-bold text-gray-500 uppercase mb-1.5 tracking-wide; }
-        .inp { @apply w-full border border-gray-300 rounded-lg p-2.5 bg-white focus:ring-2 focus:ring-blue-500 outline-none transition; }
+        .label-form { @apply block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wide; }
+        .input-form { @apply w-full border border-slate-300 rounded px-3 py-2 text-sm text-slate-700 focus:ring-2 focus:ring-slate-500 focus:border-slate-500 outline-none transition bg-white; }
     </style>
 </Layout>

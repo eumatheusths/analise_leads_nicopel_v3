@@ -5,121 +5,156 @@ import { getAuthSheets, SPREADSHEET_ID, getCurrentMonthSheetName, MONTHS, findRe
 const urlMonth = Astro.url.searchParams.get('month');
 const selectedMonth = urlMonth || getCurrentMonthSheetName();
 let rows = [];
-let totalFaturamento = 0;
-let totalVendas = 0;
+let kpi = { faturamento: 0, vendas: 0, leads: 0, ticketMedio: 0, conversao: 0 };
 
 try {
     const sheets = await getAuthSheets();
     const realName = await findRealSheetName(sheets, selectedMonth);
     if (!realName) throw new Error("Aba não encontrada");
 
+    // LÊ ATÉ A COLUNA "O"
     const response = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
-        range: `'${realName}'!A2:L1000`, 
+        range: `'${realName}'!A2:O1000`, 
     });
     
     const rawData = response.data.values || [];
+    
     rows = rawData.map((r, i) => {
-        const valorLimpo = r[11] ? parseFloat(r[11].replace('R$', '').replace(/\./g, '').replace(',', '.').trim()) : 0;
-        const isVenda = r[8]?.toLowerCase().trim() === 'sim';
-        if (isVenda) { totalFaturamento += valorLimpo; totalVendas++; }
+        const valorLimpo = r[14] ? parseFloat(r[14].replace('R$', '').replace(/\./g, '').replace(',', '.').trim()) : 0;
+        const isVenda = r[13]?.toLowerCase().trim() === 'sim';
+        
+        // Acumula KPIs
+        kpi.leads++;
+        if (isVenda) {
+            kpi.faturamento += valorLimpo;
+            kpi.vendas++;
+        }
+
         return {
-            raw: r, index: i,
-            cliente: r[0] || '-', data: r[1] || '', origem: r[2] || '-', segmento: r[4] || '-',
-            venda: isVenda, vendedor: r[10] || '-', valor: valorLimpo,
-            valorFormatado: new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valorLimpo)
+            raw: r, 
+            index: i,
+            cliente: r[0] || '-',       // A
+            data: r[1] || '',           // B
+            origem: r[3] || '-',        // D
+            segmento: r[5] || '-',      // F
+            produto: r[6] || '-',       // G
+            vendedor: r[10] || '-',     // K
+            statusGuru: r[11] || '-',   // L
+            venda: isVenda,             // N
+            valor: valorLimpo,          // O
+            valorFmt: new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valorLimpo)
         };
     }).reverse();
-} catch (e) {}
+
+    // Calcula Derivados
+    kpi.ticketMedio = kpi.vendas > 0 ? kpi.faturamento / kpi.vendas : 0;
+    kpi.conversao = kpi.leads > 0 ? (kpi.vendas / kpi.leads) * 100 : 0;
+
+} catch (e) {
+    console.error(e);
+}
 ---
 
-<Layout title="Relatórios e Exportação">
+<Layout title="Relatórios Analíticos">
     <script is:inline src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script is:inline src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script is:inline src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 
-    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 border-b border-slate-200 pb-6">
         <div>
-            <h2 class="text-2xl font-bold text-gray-800">Relatórios Detalhados</h2>
-            <p class="text-sm text-gray-500">Visualize dados de <span class="font-bold uppercase text-blue-600">{selectedMonth}</span></p>
+            <h2 class="text-2xl font-bold text-slate-900 tracking-tight">Relatório de Desempenho</h2>
+            <p class="text-sm text-slate-500">Consolidado Mensal: <span class="font-semibold text-slate-800 uppercase">{selectedMonth}</span></p>
         </div>
         
-        <form class="flex gap-2 items-center bg-white p-2 rounded-lg border shadow-sm w-full md:w-auto">
-            <span class="text-xs font-bold uppercase text-gray-400 whitespace-nowrap">Mês:</span>
-            <select name="month" onchange="this.form.submit()" class="text-sm border-none bg-transparent font-bold text-gray-700 focus:ring-0 cursor-pointer outline-none w-full">
+        <form class="flex gap-3 items-center bg-white p-1 rounded border border-slate-300 shadow-sm w-full md:w-auto">
+            <span class="text-xs font-bold uppercase text-slate-400 pl-3">MÊS:</span>
+            <select name="month" onchange="this.form.submit()" class="text-sm border-none bg-transparent font-medium text-slate-700 focus:ring-0 cursor-pointer outline-none w-full md:w-40">
                 {MONTHS.map(m => <option value={m} selected={m === selectedMonth}>{m}</option>)}
             </select>
         </form>
     </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-        <div class="bg-white p-4 rounded-lg border border-green-100 shadow-sm flex justify-between items-center">
-            <div>
-                <p class="text-xs font-bold text-green-600 uppercase">Faturamento</p>
-                <p class="text-2xl font-bold text-gray-800">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalFaturamento)}</p>
-            </div>
-            <span class="text-3xl">💰</span>
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <div class="bg-white p-4 rounded border border-slate-200 shadow-sm">
+            <p class="text-xs font-bold text-slate-400 uppercase tracking-wider">Faturamento</p>
+            <p class="text-xl font-bold text-emerald-700 mt-1">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(kpi.faturamento)}</p>
         </div>
-        <div class="bg-white p-4 rounded-lg border border-blue-100 shadow-sm flex justify-between items-center">
-            <div>
-                <p class="text-xs font-bold text-blue-600 uppercase">Vendas Fechadas</p>
-                <p class="text-2xl font-bold text-gray-800">{totalVendas}</p>
-            </div>
-            <span class="text-3xl">🤝</span>
+        <div class="bg-white p-4 rounded border border-slate-200 shadow-sm">
+            <p class="text-xs font-bold text-slate-400 uppercase tracking-wider">Total Vendas</p>
+            <p class="text-xl font-bold text-slate-800 mt-1">{kpi.vendas} <span class="text-xs text-slate-400 font-normal">/ {kpi.leads} leads</span></p>
+        </div>
+        <div class="bg-white p-4 rounded border border-slate-200 shadow-sm">
+            <p class="text-xs font-bold text-slate-400 uppercase tracking-wider">Ticket Médio</p>
+            <p class="text-xl font-bold text-slate-800 mt-1">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(kpi.ticketMedio)}</p>
+        </div>
+        <div class="bg-white p-4 rounded border border-slate-200 shadow-sm">
+            <p class="text-xs font-bold text-slate-400 uppercase tracking-wider">Conversão</p>
+            <p class="text-xl font-bold text-blue-700 mt-1">{kpi.conversao.toFixed(1)}%</p>
         </div>
     </div>
 
-    <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mb-6 flex flex-col lg:flex-row gap-4 items-center justify-between">
+    <div class="bg-white p-4 rounded shadow-sm border border-slate-200 mb-6 flex flex-col lg:flex-row gap-4 items-center justify-between">
         <div class="flex flex-col md:flex-row gap-4 w-full lg:w-auto flex-1">
             <div class="relative flex-1 w-full">
-                <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">🔍</span>
-                <input type="text" id="searchInput" placeholder="Filtrar por cliente..." class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg outline-none text-sm">
+                <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">🔍</span>
+                <input type="text" id="searchInput" placeholder="Filtrar por Cliente, Vendedor ou Produto..." class="w-full pl-10 pr-4 py-2 border border-slate-300 rounded outline-none text-sm focus:border-slate-500 transition">
             </div>
-            <select id="sortSelect" class="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-50 cursor-pointer outline-none w-full md:w-auto">
-                <option value="recente">📅 Data (Recente)</option>
-                <option value="antiga">📅 Data (Antiga)</option>
-                <option value="az">🔤 Nome (A-Z)</option>
-                <option value="maior_valor">💲 Valor (Maior)</option>
-                <option value="vendas">✅ Só Vendas</option>
+            <select id="sortSelect" class="border border-slate-300 rounded px-3 py-2 text-sm bg-slate-50 cursor-pointer outline-none w-full md:w-auto focus:border-slate-500">
+                <option value="recente">📅 Recentes</option>
+                <option value="antiga">📅 Antigos</option>
+                <option value="maior_valor">💲 Maior Valor</option>
+                <option value="vendas">✅ Apenas Vendas</option>
             </select>
         </div>
 
-        <div class="flex gap-3 w-full lg:w-auto">
-            <button id="btnExcel" class="flex-1 flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-bold transition shadow-sm"><span>📊</span> Excel</button>
-            <button id="btnPdf" class="flex-1 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-bold transition shadow-sm"><span>📄</span> PDF</button>
+        <div class="flex gap-2 w-full lg:w-auto">
+            <button id="btnExcel" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded text-xs font-bold uppercase tracking-wide transition shadow-sm flex items-center justify-center gap-2">Excel</button>
+            <button id="btnPdf" class="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded text-xs font-bold uppercase tracking-wide transition shadow-sm flex items-center justify-center gap-2">PDF</button>
         </div>
     </div>
 
-    <div class="bg-white shadow rounded-lg overflow-hidden border border-gray-200 overflow-x-auto">
-        <table class="min-w-full text-sm text-left" id="reportTable">
-            <thead class="bg-slate-800 text-white font-bold uppercase text-xs">
+    <div class="bg-white shadow-sm rounded border border-slate-200 overflow-hidden overflow-x-auto">
+        <table class="min-w-full text-xs text-left" id="reportTable">
+            <thead class="bg-slate-800 text-slate-300 font-semibold uppercase">
                 <tr>
                     <th class="px-4 py-3 whitespace-nowrap">Data</th>
                     <th class="px-4 py-3 whitespace-nowrap">Cliente</th>
+                    <th class="px-4 py-3 whitespace-nowrap">Produto</th>
                     <th class="px-4 py-3 whitespace-nowrap">Origem</th>
-                    <th class="px-4 py-3 whitespace-nowrap">Segmento</th>
                     <th class="px-4 py-3 whitespace-nowrap">Vendedor</th>
+                    <th class="px-4 py-3 whitespace-nowrap text-center">Status Guru</th>
                     <th class="px-4 py-3 text-right whitespace-nowrap">Valor</th>
-                    <th class="px-4 py-3 text-center whitespace-nowrap">Status</th>
                 </tr>
             </thead>
-            <tbody class="divide-y divide-gray-100 bg-white">
+            <tbody class="divide-y divide-slate-100 bg-white">
                 {rows.map((row) => (
-                    <tr class="data-row hover:bg-gray-50 transition"
-                        data-search={`${row.cliente} ${row.vendedor} ${row.segmento} ${row.origem}`.toLowerCase()}
+                    <tr class="data-row hover:bg-slate-50 transition"
+                        data-search={`${row.cliente} ${row.vendedor} ${row.segmento} ${row.produto}`.toLowerCase()}
                         data-nome={row.cliente.toLowerCase()} data-date={row.data} data-valor={row.valor} data-venda={row.venda ? '1' : '0'}>
-                        <td class="px-4 py-3 text-gray-500 whitespace-nowrap font-mono text-xs">{row.data.split('-').reverse().join('/')}</td>
-                        <td class="px-4 py-3 font-bold text-gray-800 whitespace-nowrap">{row.cliente}</td>
-                        <td class="px-4 py-3 text-gray-600 whitespace-nowrap">{row.origem}</td>
-                        <td class="px-4 py-3 whitespace-nowrap"><span class="bg-blue-50 text-blue-600 px-2 py-0.5 rounded text-[10px] font-bold uppercase border border-blue-100">{row.segmento}</span></td>
-                        <td class="px-4 py-3 text-gray-600 text-xs uppercase whitespace-nowrap">{row.vendedor}</td>
-                        <td class="px-4 py-3 text-right font-mono font-medium text-gray-800 whitespace-nowrap">{row.valor > 0 ? row.valorFormatado : '-'}</td>
-                        <td class="px-4 py-3 text-center whitespace-nowrap">
-                            {row.venda ? <span class="bg-emerald-100 text-emerald-800 px-2 py-1 rounded-md text-xs font-bold">✅ VENDA</span> : <span class="bg-gray-100 text-gray-500 px-2 py-1 rounded-md text-xs font-bold">⭕ ABERTO</span>}
+                        
+                        <td class="px-4 py-2.5 text-slate-500 whitespace-nowrap font-mono">{row.data.split('-').reverse().join('/')}</td>
+                        <td class="px-4 py-2.5 font-bold text-slate-800 whitespace-nowrap">{row.cliente}</td>
+                        <td class="px-4 py-2.5 text-slate-600 whitespace-nowrap truncate max-w-[150px]" title={row.produto}>{row.produto}</td>
+                        <td class="px-4 py-2.5 text-slate-500 whitespace-nowrap">{row.origem}</td>
+                        <td class="px-4 py-2.5 text-slate-500 uppercase font-bold text-[10px] whitespace-nowrap">{row.vendedor}</td>
+                        
+                        <td class="px-4 py-2.5 text-center whitespace-nowrap">
+                            <span class={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase
+                                ${row.statusGuru.includes('VENDA') || row.statusGuru.includes('GANHO') ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 
+                                  row.statusGuru.includes('PERDIDO') ? 'bg-red-50 text-red-700 border-red-100' :
+                                  row.statusGuru.includes('NEGOCIA') ? 'bg-yellow-50 text-yellow-700 border-yellow-100' : 
+                                  'bg-slate-100 text-slate-500 border-slate-200'}`}>
+                                {row.statusGuru}
+                            </span>
+                        </td>
+                        
+                        <td class="px-4 py-2.5 text-right font-mono font-medium text-slate-900 whitespace-nowrap">
+                            {row.valor > 0 ? row.valorFmt : '-'}
                         </td>
                     </tr>
                 ))}
-                {rows.length === 0 && (<tr><td colspan="7" class="px-6 py-10 text-center text-gray-400">Nenhum dado encontrado.</td></tr>)}
+                {rows.length === 0 && (<tr><td colspan="7" class="px-6 py-12 text-center text-slate-400">Nenhum registro encontrado para este mês.</td></tr>)}
             </tbody>
         </table>
     </div>
@@ -144,12 +179,9 @@ try {
             visibleRows.sort((a, b) => {
                 const dateA = a.getAttribute('data-date') || '', dateB = b.getAttribute('data-date') || '';
                 const valA = parseFloat(a.getAttribute('data-valor')), valB = parseFloat(b.getAttribute('data-valor'));
-                const nomeA = a.getAttribute('data-nome'), nomeB = b.getAttribute('data-nome');
                 if (criteria === 'recente') return dateB.localeCompare(dateA);
                 if (criteria === 'antiga') return dateA.localeCompare(dateB);
-                if (criteria === 'az') return nomeA.localeCompare(nomeB);
                 if (criteria === 'maior_valor') return valB - valA;
-                if (criteria === 'menor_valor') return valA - valB;
                 return 0;
             });
             visibleRows.forEach(row => tableBody.appendChild(row));
@@ -166,8 +198,9 @@ try {
         document.getElementById('btnPdf').addEventListener('click', () => {
             const { jsPDF } = window.jspdf;
             const doc = new jsPDF({ orientation: 'landscape' });
-            doc.setFontSize(18); doc.text(`Relatório - ${selectedMonth}`, 14, 20);
-            doc.autoTable({ html: '#reportTable', startY: 35, styles: { fontSize: 7 }, headStyles: { fillColor: [30, 41, 59] } });
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(16); doc.text(`Relatório Gerencial - ${selectedMonth}`, 14, 20);
+            doc.autoTable({ html: '#reportTable', startY: 30, styles: { fontSize: 7, cellPadding: 3 }, headStyles: { fillColor: [15, 23, 42] }, theme: 'grid' });
             doc.save(`Nicopel_Relatorio_${selectedMonth}.pdf`);
         });
     </script>

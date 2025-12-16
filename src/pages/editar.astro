@@ -12,16 +12,25 @@ try {
     const realName = await findRealSheetName(sheets, selectedMonth);
     if (!realName) throw new Error("Aba não encontrada");
 
+    // LÊ ATÉ A COLUNA "O" PARA TER TODOS OS DADOS
     const response = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
-        range: `'${realName}'!A2:L1000`, 
+        range: `'${realName}'!A2:O1000`, 
     });
     
     rows = (response.data.values || []).map((r, i) => {
-        const venda = r[8]?.toLowerCase().trim() === 'sim' ? 1 : 0;
+        // Mapeamento Novo
+        const venda = r[13]?.toLowerCase().trim() === 'sim' ? 1 : 0;
         return { 
-            data: r, index: i, realSheetName: realName,
-            nome: r[0] || '', dataDate: r[1] || '', isVenda: venda
+            data: r, 
+            index: i, 
+            realSheetName: realName,
+            nome: r[0] || 'Sem Nome',
+            dataDate: r[1] || '',
+            produto: r[6] || '-',
+            vendedor: r[10] || '-',
+            statusGuru: r[11] || '-',
+            isVenda: venda
         };
     }).reverse(); 
 } catch (e) {
@@ -30,82 +39,80 @@ try {
 ---
 
 <Layout title="Gerenciar Leads">
-    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 border-b border-slate-200 pb-6">
         <div>
-            <h2 class="text-2xl font-bold text-gray-800">Gerenciar Leads</h2>
-            <p class="text-sm text-gray-500">Edite e organize seus contatos</p>
+            <h2 class="text-2xl font-bold text-slate-900 tracking-tight">Gestão de Leads</h2>
+            <p class="text-sm text-slate-500">Edite e atualize o status dos seus contatos.</p>
         </div>
         
-        <form class="flex gap-2 items-center bg-white p-2 rounded-lg border shadow-sm w-full md:w-auto">
-            <span class="text-xs font-bold uppercase text-gray-400 whitespace-nowrap">Mês:</span>
-            <select name="month" onchange="this.form.submit()" class="text-sm border-none bg-transparent font-bold text-gray-700 focus:ring-0 cursor-pointer outline-none w-full">
+        <form class="bg-white p-1 rounded border border-slate-300 shadow-sm w-full md:w-auto flex items-center">
+            <span class="text-xs font-bold uppercase text-slate-400 pl-3 pr-2">MÊS:</span>
+            <select name="month" onchange="this.form.submit()" class="text-sm border-none bg-transparent font-medium text-slate-700 focus:ring-0 cursor-pointer outline-none w-full md:w-32 py-1.5">
                 {MONTHS.map(m => <option value={m} selected={m === selectedMonth}>{m}</option>)}
             </select>
         </form>
     </div>
 
-    {errorMsg && <div class="bg-red-100 text-red-700 p-4 rounded mb-4">{errorMsg}</div>}
+    {errorMsg && <div class="bg-red-50 text-red-700 p-4 rounded border border-red-200 mb-6 text-sm font-medium">{errorMsg}</div>}
 
-    <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mb-6 grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
-        <div class="md:col-span-8 relative">
-            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <span class="text-gray-400">🔍</span>
-            </div>
-            <input type="text" id="searchInput" placeholder="Pesquisar por nome, vendedor..." class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition">
+    <div class="bg-white p-4 rounded shadow-sm border border-slate-200 mb-6 flex flex-col md:flex-row gap-4">
+        <div class="relative flex-1">
+            <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">🔍</span>
+            <input type="text" id="searchInput" placeholder="Pesquisar por Cliente, Vendedor ou Produto..." class="w-full pl-10 pr-4 py-2 border border-slate-300 rounded outline-none text-sm focus:border-slate-500 transition">
         </div>
-        <div class="md:col-span-4">
-            <select id="sortSelect" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-700 focus:ring-2 focus:ring-blue-500 outline-none cursor-pointer bg-gray-50">
-                <option value="recente">📅 Mais Recentes</option>
-                <option value="antigo">📅 Mais Antigos</option>
-                <option value="az">🔤 Ordem A-Z</option>
-                <option value="venda">💰 Quem Comprou</option>
-                <option value="aberto">⏳ Em Aberto</option>
-            </select>
-        </div>
+        <select id="sortSelect" class="border border-slate-300 rounded px-3 py-2 bg-slate-50 text-sm cursor-pointer md:w-48 focus:border-slate-500 outline-none">
+            <option value="recente">📅 Mais Recentes</option>
+            <option value="az">🔤 Ordem A-Z</option>
+            <option value="venda">💰 Já Venderam</option>
+        </select>
     </div>
 
-    <div class="bg-white shadow rounded-lg overflow-hidden border border-gray-200 overflow-x-auto">
+    <div class="bg-white shadow-sm rounded border border-slate-200 overflow-hidden overflow-x-auto">
         <table class="min-w-full text-sm text-left" id="leadsTable">
-            <thead class="bg-gray-50 text-gray-500 font-bold uppercase text-xs border-b">
+            <thead class="bg-slate-50 text-slate-500 font-bold uppercase text-xs border-b border-slate-200">
                 <tr>
-                    <th class="px-6 py-4 whitespace-nowrap">Cliente / Empresa</th>
-                    <th class="px-6 py-4 whitespace-nowrap">Data</th>
-                    <th class="px-6 py-4 whitespace-nowrap">Vendedor</th>
-                    <th class="px-6 py-4 whitespace-nowrap">Status</th>
-                    <th class="px-6 py-4 text-right whitespace-nowrap">Ação</th>
+                    <th class="px-6 py-3 whitespace-nowrap">Data</th>
+                    <th class="px-6 py-3 whitespace-nowrap">Cliente / Lead</th>
+                    <th class="px-6 py-3 whitespace-nowrap">Produto Interesse</th>
+                    <th class="px-6 py-3 whitespace-nowrap">Vendedor</th>
+                    <th class="px-6 py-3 whitespace-nowrap text-center">Status Guru</th>
+                    <th class="px-6 py-3 text-right whitespace-nowrap">Ação</th>
                 </tr>
             </thead>
-            <tbody class="divide-y divide-gray-100">
+            <tbody class="divide-y divide-slate-100">
                 {rows.map((row) => (
-                    <tr class="lead-row hover:bg-blue-50 transition group" 
-                        data-nome={row.nome.toLowerCase()} 
-                        data-date={row.dataDate} 
-                        data-venda={row.isVenda}
-                        data-search={`${row.data.join(' ')}`.toLowerCase()}
+                    <tr class="lead-row hover:bg-slate-50 transition group" 
+                        data-nome={row.nome.toLowerCase()} data-date={row.dataDate} data-venda={row.isVenda}
+                        data-search={`${row.nome} ${row.produto} ${row.vendedor}`.toLowerCase()}
                     >
-                        <td class="px-6 py-4 font-bold text-gray-700 whitespace-nowrap">{row.data[0] || '-'}</td>
-                        <td class="px-6 py-4 text-gray-500 whitespace-nowrap">{row.data[1] ? row.data[1].split('-').reverse().join('/') : '-'}</td>
-                        <td class="px-6 py-4 text-gray-500 uppercase text-xs font-bold whitespace-nowrap">{row.data[10] || '-'}</td>
-                        <td class="px-6 py-4 whitespace-nowrap">
-                            {row.data[8]?.toLowerCase() === 'sim' 
-                                ? <span class="bg-emerald-100 text-emerald-800 px-2 py-1 rounded text-xs font-bold border border-emerald-200">VENDA FECHADA</span>
-                                : <span class="bg-gray-100 text-gray-600 px-2 py-1 rounded text-xs font-medium border border-gray-200">EM ABERTO</span>
-                            }
+                        <td class="px-6 py-3 text-slate-500 whitespace-nowrap text-xs font-mono">{row.dataDate ? row.dataDate.split('-').reverse().join('/') : '-'}</td>
+                        <td class="px-6 py-3 font-bold text-slate-800 whitespace-nowrap">{row.nome}</td>
+                        <td class="px-6 py-3 text-slate-600 text-xs whitespace-nowrap truncate max-w-[200px]">{row.produto}</td>
+                        <td class="px-6 py-3 text-slate-500 uppercase text-xs font-bold whitespace-nowrap">{row.vendedor}</td>
+                        <td class="px-6 py-3 text-center whitespace-nowrap">
+                            <span class={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase
+                                ${row.statusGuru.includes('VENDA') || row.statusGuru.includes('GANHO') ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 
+                                  row.statusGuru.includes('PERDIDO') ? 'bg-red-50 text-red-700 border-red-100' :
+                                  row.statusGuru.includes('NEGOCIA') ? 'bg-yellow-50 text-yellow-700 border-yellow-100' : 
+                                  'bg-slate-100 text-slate-500 border-slate-200'}`}>
+                                {row.statusGuru}
+                            </span>
                         </td>
-                        <td class="px-6 py-4 text-right whitespace-nowrap">
+                        <td class="px-6 py-3 text-right whitespace-nowrap">
                             <a href={`/editar-lead?sheet=${encodeURIComponent(row.realSheetName)}&index=${row.index}`} 
-                               class="text-blue-600 font-bold border border-blue-100 bg-blue-50 px-3 py-1.5 rounded hover:bg-blue-100 transition">
-                                ✏️ Editar
+                               class="text-slate-600 font-bold border border-slate-300 bg-white px-3 py-1 rounded text-xs hover:bg-slate-800 hover:text-white hover:border-slate-800 transition">
+                               EDITAR
                             </a>
                         </td>
                     </tr>
                 ))}
-                <tr id="noResults" class="hidden"><td colspan="5" class="px-6 py-10 text-center text-gray-400">Nenhum lead encontrado.</td></tr>
-                {rows.length === 0 && (<tr><td colspan="5" class="px-6 py-8 text-center text-gray-400">A planilha deste mês está vazia.</td></tr>)}
+                
+                <tr id="noResults" class="hidden"><td colspan="6" class="px-6 py-12 text-center text-slate-400 text-sm">Nenhum lead encontrado com este filtro.</td></tr>
+                {rows.length === 0 && (<tr><td colspan="6" class="px-6 py-12 text-center text-slate-400 text-sm">A planilha deste mês está vazia.</td></tr>)}
             </tbody>
         </table>
     </div>
-
+    
     <script>
         const searchInput = document.getElementById('searchInput');
         const sortSelect = document.getElementById('sortSelect');
@@ -128,18 +135,13 @@ try {
         sortSelect.addEventListener('change', () => {
             const criteria = sortSelect.value;
             rows.sort((a, b) => {
-                const nomeA = a.getAttribute('data-nome');
-                const nomeB = b.getAttribute('data-nome');
-                const dateA = a.getAttribute('data-date') || '0000-00-00';
-                const dateB = b.getAttribute('data-date') || '0000-00-00';
-                const vendaA = parseInt(a.getAttribute('data-venda'));
-                const vendaB = parseInt(b.getAttribute('data-venda'));
+                const nomeA = a.getAttribute('data-nome'), nomeB = b.getAttribute('data-nome');
+                const dateA = a.getAttribute('data-date') || '', dateB = b.getAttribute('data-date') || '';
+                const vendaA = parseInt(a.getAttribute('data-venda')), vendaB = parseInt(b.getAttribute('data-venda'));
 
                 if (criteria === 'az') return nomeA.localeCompare(nomeB);
-                else if (criteria === 'recente') return dateB.localeCompare(dateA);
-                else if (criteria === 'antigo') return dateA.localeCompare(dateB);
-                else if (criteria === 'venda') return vendaB - vendaA;
-                else if (criteria === 'aberto') return vendaA - vendaB;
+                if (criteria === 'recente') return dateB.localeCompare(dateA); 
+                if (criteria === 'venda') return vendaB - vendaA;
                 return 0;
             });
             rows.forEach(row => tableBody.insertBefore(row, noResultsMsg));

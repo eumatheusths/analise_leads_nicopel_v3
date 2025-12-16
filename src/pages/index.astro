@@ -1,238 +1,271 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import Card from '../components/Card.astro';
 import { getAuthSheets, SPREADSHEET_ID, getCurrentMonthSheetName, MONTHS, findRealSheetName } from '../lib/sheets';
 
+// --- CONFIGURAÇÃO DA PÁGINA ---
 const urlMonth = Astro.url.searchParams.get('month');
+const urlView = Astro.url.searchParams.get('view') || 'geral'; 
 const selectedMonth = urlMonth || getCurrentMonthSheetName();
 
-let errorMsg = null;
-let metrics = { total: 0, organicos: 0, qualificados: 0, vendas: 0, desqualificados: 0, faturamento: 0 };
-
-// Dados para os Gráficos
-let chartData = { 
-    origem: {}, 
-    segmento: {}, 
-    vendedor: {}, 
-    perda: {},
-    ondeEncontrou: {}, 
-    organicoVsAds: { org: 0, ads: 0 } 
-};
-
+let metrics = { total: 0, organicos: 0, qualificados: 0, vendas: 0, desqualificados: 0, faturamento: 0, rd: 0, pipefy: 0 };
+let chartData = { origem: {}, segmento: {}, vendedor: {}, statusGuru: {}, organicoVsAds: { org: 0, ads: 0 } };
 let closedSalesList = [];
 let top5LossReasons = [];
+let top5Products = [];
 let realSheetName = selectedMonth;
+let errorMsg = null;
+
+const viewTitles = { 'geral': 'Visão Geral', 'pago': 'Tráfego Pago', 'organico': 'Orgânico' };
 
 try {
     const sheets = await getAuthSheets();
-    
-    // 1. Acha o nome certo da aba
     const foundName = await findRealSheetName(sheets, selectedMonth);
     if (foundName) realSheetName = foundName;
 
-    // 2. Puxa os dados
+    // LÊ ATÉ A COLUNA "O" (Índice 14)
     const monthResponse = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
-        range: `'${realSheetName}'!A2:L1000`, 
+        range: `'${realSheetName}'!A2:O1000`, 
     }).catch(() => ({ data: { values: [] } }));
 
     const monthRows = monthResponse.data.values || [];
-    metrics.total = monthRows.length;
-
     let lossCountMap = {};
+    let productCountMap = {};
 
     monthRows.forEach(row => {
-        // Leitura das colunas com proteção contra vazio
-        const cliente = row[0] || 'Sem nome';
-        const origem = (row[2] || 'Não Informado').trim();
-        const segmento = (row[4] || 'Outros').trim();
-        const ondeEncontrou = (row[6] || 'Não detalhado').trim();
-        const qualificado = (row[7] || '').toLowerCase().trim();
-        const venda = (row[8] || '').toLowerCase().trim();
-        const motivoRaw = row[9] || ''; 
+        // --- MAPEAMENTO COMPLETO (A-O) ---
+        const cliente = row[0] || 'Sem nome';           // A [0]
+        const rdCheck = (row[2] || '').toUpperCase();   // C [2]
+        const origem = (row[3] || '-').trim();          // D [3]
+        const segmento = (row[5] || '-').trim();        // F [5]
+        const produto = (row[6] || '-').trim();         // G [6]
+        const qualificado = (row[8] || '').trim();      // I [8]
+        const motivoRaw = row[9] || '';                 // J [9]
         
-        let vendedor = row[10] || 'Sem Responsável';
-        if (vendedor.trim() === '' || vendedor.toLowerCase().includes('diretoria')) {
-            vendedor = 'Sem Responsável';
-        }
+        let vendedor = row[10] || 'Sem Resp.';          // K [10]
+        if (vendedor.trim() === '' || vendedor.toLowerCase().includes('diretoria')) vendedor = 'Sem Resp.';
 
-        const valorStr = row[11] ? row[11].replace('R$', '').replace(/\./g, '').replace(',', '.').trim() : '0';
+        const statusGuru = (row[11] || 'Não Informado').trim(); // L [11]
+        const pipefyCheck = (row[12] || '').toUpperCase();      // M [12]
+        
+        const vendaStatus = (row[13] || '').trim();             // N [13]
+        const isVendaSim = vendaStatus.toLowerCase() === 'sim';
+
+        const valorStr = row[14] ? row[14].replace('R$', '').replace(/\./g, '').replace(',', '.').trim() : '0'; // O [14]
         const valorFloat = parseFloat(valorStr) || 0;
 
-        // Regra: Orgânico vs Pago
+        // --- FILTROS (Lógica Orgânico vs Pago) ---
         const origemLow = origem.toLowerCase();
         let isPago = false;
-        if (origemLow.includes('ads') || 
-            origemLow.includes('instagram') || 
-            origemLow.includes('face') || 
-            origemLow.includes('google') || 
-            origemLow.includes('patrocinado') || 
-            origemLow.includes('rd') || 
-            origemLow.includes('outros')) {
-            isPago = true;
-        }
+        if (origemLow.includes('ads') || origemLow.includes('instagram') || origemLow.includes('face') || origemLow.includes('google') || origemLow.includes('patrocinado') || origemLow.includes('rd')) isPago = true;
 
-        // Métricas dos Cards
+        if (urlView === 'pago' && !isPago) return;
+        if (urlView === 'organico' && isPago) return;
+
+        // --- MÉTRICAS ---
+        metrics.total++;
         if (!isPago) metrics.organicos++;
-        if (qualificado === 'sim') metrics.qualificados++;
-        if (qualificado === 'não') metrics.desqualificados++;
+        if (qualificado.toLowerCase() === 'sim') metrics.qualificados++;
+        if (qualificado.toLowerCase() === 'não' || qualificado.toLowerCase().includes('aguardando')) metrics.desqualificados++;
         
-        if (venda === 'sim') {
+        // Contadores de Checkbox (RD/Pipefy)
+        if (rdCheck === 'TRUE' || rdCheck === 'VERDADEIRO' || rdCheck === 'SIM') metrics.rd++;
+        if (pipefyCheck === 'TRUE' || pipefyCheck === 'VERDADEIRO' || pipefyCheck === 'SIM') metrics.pipefy++;
+
+        if (isVendaSim) {
             metrics.vendas++;
             metrics.faturamento += valorFloat;
-            closedSalesList.push({ cliente, valor: valorFloat, segmento, origem, vendedor });
+            
+            // ADICIONA NA LISTA DE VENDAS COM TODAS AS COLUNAS PEDIDAS (A,C,D,F,G,I,M,K,N,O)
+            closedSalesList.push({ 
+                cliente,        // A
+                rd: rdCheck,    // C
+                origem,         // D
+                segmento,       // F
+                produto,        // G
+                qualificado,    // I
+                pipefy: pipefyCheck, // M
+                vendedor,       // K
+                status: vendaStatus, // N
+                valor: valorFloat // O
+            });
         } else {
-            // Se não vendeu e tem motivo escrito, conta como perda
             if (motivoRaw.trim().length > 1) {
-                const motivoFormatado = motivoRaw.trim().charAt(0).toUpperCase() + motivoRaw.trim().slice(1).toLowerCase();
-                lossCountMap[motivoFormatado] = (lossCountMap[motivoFormatado] || 0) + 1;
+                const mFmt = motivoRaw.trim().charAt(0).toUpperCase() + motivoRaw.trim().slice(1).toLowerCase();
+                lossCountMap[mFmt] = (lossCountMap[mFmt] || 0) + 1;
             }
         }
 
-        // Popula Gráficos
+        // --- GRÁFICOS ---
         chartData.origem[origem] = (chartData.origem[origem] || 0) + 1;
         chartData.segmento[segmento] = (chartData.segmento[segmento] || 0) + 1;
         chartData.vendedor[vendedor] = (chartData.vendedor[vendedor] || 0) + 1;
         
-        if (ondeEncontrou.length > 1) {
-            const ondeClean = ondeEncontrou.charAt(0).toUpperCase() + ondeEncontrou.slice(1).toLowerCase();
-            chartData.ondeEncontrou[ondeClean] = (chartData.ondeEncontrou[ondeClean] || 0) + 1;
+        if (statusGuru.length > 1) {
+             const sgClean = statusGuru.charAt(0).toUpperCase() + statusGuru.slice(1).toLowerCase();
+             chartData.statusGuru[sgClean] = (chartData.statusGuru[sgClean] || 0) + 1;
+        }
+        if (produto.length > 2) {
+            const pFmt = produto.charAt(0).toUpperCase() + produto.slice(1).toLowerCase();
+            productCountMap[pFmt] = (productCountMap[pFmt] || 0) + 1;
         }
 
-        if (isPago) chartData.organicoVsAds.ads++;
-        else chartData.organicoVsAds.org++;
+        if (isPago) chartData.organicoVsAds.ads++; else chartData.organicoVsAds.org++;
     });
 
     closedSalesList.sort((a, b) => b.valor - a.valor);
+    top5LossReasons = Object.entries(lossCountMap).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([motivo, qtd]) => ({ motivo, qtd }));
+    top5Products = Object.entries(productCountMap).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([produto, qtd]) => ({ produto, qtd }));
 
-    top5LossReasons = Object.entries(lossCountMap)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 5)
-        .map(([motivo, qtd]) => ({ motivo, qtd }));
-
-} catch (e) {
-    errorMsg = "Erro: " + e.message;
-}
+} catch (e) { errorMsg = "Erro: " + e.message; }
 
 const chartsJSON = JSON.stringify(chartData);
 ---
 
-<Layout title="Dashboard">
-    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+<Layout title="Dashboard Executivo">
+    
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 border-b border-slate-200 pb-6">
         <div>
-            <h2 class="text-2xl md:text-3xl font-bold text-gray-800">Dashboard Nicopel</h2>
-            <p class="text-gray-500 text-sm">Visão Mensal: <span class="font-bold text-blue-600 uppercase">{realSheetName}</span></p>
+            <h2 class="text-2xl font-bold text-slate-900 tracking-tight">Performance Analítica</h2>
+            <div class="flex items-center gap-3 text-sm mt-1">
+                <span class="text-slate-500">Período: <span class="font-semibold text-slate-800 uppercase">{realSheetName}</span></span>
+                <span class="text-slate-300">|</span>
+                <span class="text-slate-500">Visualização: <span class="font-semibold text-slate-800">{viewTitles[urlView]}</span></span>
+            </div>
         </div>
         
-        <form method="GET" class="bg-white p-2 rounded-lg border shadow-sm flex items-center gap-2 w-full md:w-auto">
-            <span class="text-xs font-bold text-gray-500 uppercase px-2 whitespace-nowrap">Mês:</span>
-            <select name="month" onchange="this.form.submit()" class="bg-gray-100 border-transparent rounded text-sm font-bold text-gray-700 focus:ring-0 py-2 px-3 cursor-pointer w-full md:w-auto outline-none">
-                {MONTHS.map(m => (
-                    <option value={m} selected={m === selectedMonth}>{m}</option>
-                ))}
-            </select>
-        </form>
+        <div class="flex flex-col sm:flex-row gap-3 w-full md:w-auto mt-4 md:mt-0">
+            <form method="GET" class="relative">
+                <input type="hidden" name="view" value={urlView} />
+                <select name="month" onchange="this.form.submit()" class="appearance-none bg-white border border-slate-300 text-slate-700 py-2 pl-4 pr-10 rounded shadow-sm text-sm font-medium focus:outline-none focus:ring-2 focus:ring-slate-500 focus:border-slate-500 cursor-pointer">
+                    {MONTHS.map(m => <option value={m} selected={m === selectedMonth}>{m}</option>)}
+                </select>
+                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-500">
+                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
+                </div>
+            </form>
+
+            <div class="bg-white border border-slate-300 rounded flex p-1 shadow-sm">
+                <a href={`/?month=${selectedMonth}&view=geral`} class={`px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-wide ${urlView === 'geral' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-slate-900'}`}>Geral</a>
+                <a href={`/?month=${selectedMonth}&view=pago`} class={`px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-wide ${urlView === 'pago' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-slate-900'}`}>Pago</a>
+                <a href={`/?month=${selectedMonth}&view=organico`} class={`px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-wide ${urlView === 'organico' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-slate-900'}`}>Orgânico</a>
+            </div>
+        </div>
     </div>
 
-    {errorMsg && <div class="bg-red-100 text-red-700 p-4 rounded mb-4 font-bold">{errorMsg}</div>}
-
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 mb-8">
-        <Card title="Total Leads" value={metrics.total} color="blue" icon="👥" />
-        <Card title="Orgânicos" value={metrics.organicos} color="green" icon="🌿" />
-        <Card title="Qualificados" value={metrics.qualificados} color="indigo" icon="⭐" />
-        <Card title="Vendas" value={metrics.vendas} color="emerald" icon="💰" />
-        <Card title="Desqualificados" value={metrics.desqualificados} color="red" icon="🚫" />
-        <Card title="Faturamento" value={new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(metrics.faturamento)} color="yellow" icon="💲" isMoney={true} />
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+        <div class="bg-white p-5 rounded border border-slate-200 shadow-sm hover:border-blue-400 transition">
+            <p class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Total de Leads</p>
+            <div class="flex justify-between items-end">
+                <h3 class="text-2xl font-bold text-slate-900">{metrics.total}</h3>
+            </div>
+        </div>
+        <div class="bg-white p-5 rounded border border-slate-200 shadow-sm hover:border-blue-400 transition">
+            <p class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Qualificados</p>
+            <div class="flex justify-between items-end">
+                <h3 class="text-2xl font-bold text-slate-900">{metrics.qualificados}</h3>
+                <span class="text-xs font-medium px-2 py-0.5 bg-blue-50 text-blue-700 rounded">{(metrics.qualificados/metrics.total*100 || 0).toFixed(1)}%</span>
+            </div>
+        </div>
+        <div class="bg-white p-5 rounded border border-slate-200 shadow-sm hover:border-green-400 transition">
+            <p class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Vendas Fechadas</p>
+            <div class="flex justify-between items-end">
+                <h3 class="text-2xl font-bold text-emerald-700">{metrics.vendas}</h3>
+                <span class="text-xs font-medium px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded border border-emerald-100">R$ {new Intl.NumberFormat('pt-BR').format(metrics.faturamento)}</span>
+            </div>
+        </div>
+        <div class="bg-white p-5 rounded border border-slate-200 shadow-sm hover:border-purple-400 transition">
+            <p class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Ticket Médio</p>
+            <div class="flex justify-between items-end">
+                <h3 class="text-2xl font-bold text-slate-900">{metrics.vendas > 0 ? new Intl.NumberFormat('pt-BR', {style:'currency', currency:'BRL'}).format(metrics.faturamento/metrics.vendas) : 'R$ 0'}</h3>
+            </div>
+        </div>
     </div>
 
-    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-8">
-        
+    <div class="grid grid-cols-2 gap-4 mb-8">
+        <div class="bg-indigo-50 border border-indigo-100 p-4 rounded-lg flex items-center justify-between">
+            <div class="flex items-center gap-3"><span class="text-2xl">🔗</span><div><p class="text-xs font-bold text-indigo-800 uppercase">Leads no RD</p></div></div>
+            <span class="text-2xl font-bold text-indigo-900">{metrics.rd}</span>
+        </div>
+        <div class="bg-sky-50 border border-sky-100 p-4 rounded-lg flex items-center justify-between">
+            <div class="flex items-center gap-3"><span class="text-2xl">🟦</span><div><p class="text-xs font-bold text-sky-800 uppercase">No Pipefy</p></div></div>
+            <span class="text-2xl font-bold text-sky-900">{metrics.pipefy}</span>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        <div class="bg-white border border-slate-200 rounded shadow-sm">
+            <div class="px-5 py-4 border-b border-slate-100 bg-red-50/50"><h3 class="text-sm font-bold text-red-800 uppercase tracking-wide">❌ Top 5 Motivos de Perda</h3></div>
+            <div class="p-0">
+                {top5LossReasons.length === 0 ? <div class="p-8 text-center text-slate-400 text-sm">Sem dados.</div> : (
+                    <table class="w-full text-sm text-left"><tbody class="divide-y divide-slate-50">
+                        {top5LossReasons.map((item, i) => (<tr class="hover:bg-slate-50"><td class="px-5 py-3 text-slate-600 font-medium truncate max-w-[250px]" title={item.motivo}><span class="text-xs text-slate-400 mr-2 font-mono">#{i+1}</span> {item.motivo}</td><td class="px-5 py-3 text-right font-bold text-slate-900">{item.qtd}</td></tr>))}
+                    </tbody></table>
+                )}
+            </div>
+        </div>
+        <div class="bg-white border border-slate-200 rounded shadow-sm">
+            <div class="px-5 py-4 border-b border-slate-100 bg-emerald-50/50"><h3 class="text-sm font-bold text-emerald-800 uppercase tracking-wide">📦 Top 5 Produtos (Col G)</h3></div>
+            <div class="p-0">
+                {top5Products.length === 0 ? <div class="p-8 text-center text-slate-400 text-sm">Sem dados.</div> : (
+                    <table class="w-full text-sm text-left"><tbody class="divide-y divide-slate-50">
+                        {top5Products.map((item, i) => (<tr class="hover:bg-slate-50"><td class="px-5 py-3 text-slate-600 font-medium truncate max-w-[250px]" title={item.produto}><span class="text-xs text-slate-400 mr-2 font-mono">#{i+1}</span> {item.produto}</td><td class="px-5 py-3 text-right font-bold text-slate-900">{item.qtd}</td></tr>))}
+                    </tbody></table>
+                )}
+            </div>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
         <div class="space-y-6">
-            <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                <h3 class="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2">❌ Top 5 Motivos de Perda</h3>
-                <div class="flex flex-col gap-3">
-                    {top5LossReasons.length === 0 ? (
-                        <p class="text-gray-400 text-sm text-center py-4">Nenhuma perda com motivo registrado.</p>
-                    ) : (
-                        top5LossReasons.map((item, index) => (
-                            <div class={`flex justify-between items-center p-3 rounded-lg ${index === 1 ? 'bg-gray-50' : 'bg-white border-b border-gray-50'}`}>
-                                <div class="flex gap-3 items-start">
-                                    <span class="text-gray-400 font-bold min-w-[20px]">{index + 1}.</span>
-                                    <span class="text-gray-700 text-sm font-medium leading-snug">{item.motivo}</span>
-                                </div>
-                                <span class="font-bold text-gray-800 ml-4">{item.qtd}</span>
-                            </div>
-                        ))
-                    )}
-                </div>
-            </div>
-            
-            <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-                <h3 class="text-lg font-bold text-gray-800 mb-4">👔 Leads por Vendedor</h3>
-                <div id="chart-vendedor" class="h-64 w-full"></div>
-            </div>
+            <div class="bg-white border border-slate-200 rounded shadow-sm p-4"><h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Vendedores</h4><div id="chart-vendedor" class="h-64"></div></div>
+            <div class="bg-white border border-slate-200 rounded shadow-sm p-4"><h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Segmentos (Col F)</h4><div id="chart-segmento" class="h-64"></div></div>
         </div>
-
         <div class="space-y-6">
-             <div class="grid grid-cols-1 md:grid-cols-2 gap-6 h-full">
-                <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-                    <h4 class="text-xs font-bold text-gray-400 uppercase mb-4">Origem</h4>
-                    <div id="chart-origem"></div>
-                </div>
-                <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-                    <h4 class="text-xs font-bold text-gray-400 uppercase mb-4">Segmentos</h4>
-                    <div id="chart-segmento"></div>
-                </div>
-                <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 col-span-1 md:col-span-2 overflow-hidden">
-                    <h4 class="text-xs font-bold text-gray-400 uppercase mb-4">Orgânico vs Pago</h4>
-                    <div id="chart-ads"></div>
-                </div>
-             </div>
+            <div class="bg-white border border-slate-200 rounded shadow-sm p-4"><h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Origem dos Leads (Col D)</h4><div id="chart-origem" class="h-64"></div></div>
+            <div class="bg-white border border-slate-200 rounded shadow-sm p-4"><h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Status no Guru (Col L)</h4><div id="chart-status" class="h-64 flex items-center justify-center"></div></div>
         </div>
     </div>
 
-    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 mb-8 overflow-hidden">
-        <h3 class="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
-            🔎 Onde nos Encontrou
-        </h3>
-        <div id="chart-onde" class="h-72"></div>
-    </div>
-
-    <div class="bg-white rounded-xl shadow-sm border border-gray-200 mb-12">
-        <div class="p-6 border-b border-gray-200 bg-gray-50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-            <div>
-                <h3 class="text-xl font-bold text-gray-800">💰 Vendas Fechadas</h3>
-                <p class="text-sm text-gray-500">Detalhes deste mês</p>
-            </div>
-            <span class="bg-green-100 text-green-800 text-xs font-bold px-3 py-1 rounded-full">
-                {closedSalesList.length} Vendas
-            </span>
+    <div class="bg-white border border-slate-200 rounded shadow-sm overflow-hidden mb-12">
+        <div class="px-6 py-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+            <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide">Extrato de Vendas (Detelhado)</h3>
+            <span class="text-xs font-mono text-slate-500">{closedSalesList.length} registros</span>
         </div>
-        
-        <div class="overflow-x-auto max-h-[500px] overflow-y-auto">
-            <table class="min-w-full text-sm text-left">
-                <thead class="bg-gray-100 text-gray-600 font-bold uppercase text-xs sticky top-0 z-10 shadow-sm">
+        <div class="overflow-x-auto">
+            <table class="min-w-full text-xs text-left whitespace-nowrap">
+                <thead class="bg-white text-slate-500 font-semibold border-b border-slate-200">
                     <tr>
-                        <th class="px-6 py-4 whitespace-nowrap">Cliente</th>
-                        <th class="px-6 py-4 whitespace-nowrap">Valor</th>
-                        <th class="px-6 py-4 whitespace-nowrap">Segmento</th>
-                        <th class="px-6 py-4 whitespace-nowrap">Origem</th>
-                        <th class="px-6 py-4 whitespace-nowrap">Vendedor</th>
+                        <th class="px-4 py-3">Cliente (A)</th>
+                        <th class="px-4 py-3 text-center">RD (C)</th>
+                        <th class="px-4 py-3">Origem (D)</th>
+                        <th class="px-4 py-3">Segmento (F)</th>
+                        <th class="px-4 py-3">Produto (G)</th>
+                        <th class="px-4 py-3">Qualif. (I)</th>
+                        <th class="px-4 py-3 text-center">Pipefy (M)</th>
+                        <th class="px-4 py-3">Vend. (K)</th>
+                        <th class="px-4 py-3 text-center">Status (N)</th>
+                        <th class="px-4 py-3 text-right">Valor (O)</th>
                     </tr>
                 </thead>
-                <tbody class="divide-y divide-gray-100">
+                <tbody class="divide-y divide-slate-100">
                     {closedSalesList.length === 0 ? (
-                        <tr><td colspan="5" class="p-8 text-center text-gray-400">Nenhuma venda neste mês.</td></tr>
+                        <tr><td colspan="10" class="px-6 py-8 text-center text-slate-400">Nenhum dado disponível.</td></tr>
                     ) : (
                         closedSalesList.map(venda => (
-                            <tr class="hover:bg-green-50 transition">
-                                <td class="px-6 py-4 font-bold text-gray-800 whitespace-nowrap">{venda.cliente}</td>
-                                <td class="px-6 py-4 font-mono font-bold text-green-700 whitespace-nowrap">
+                            <tr class="hover:bg-slate-50 transition-colors">
+                                <td class="px-4 py-2 font-bold text-slate-900">{venda.cliente}</td>
+                                <td class="px-4 py-2 text-center text-slate-500">{venda.rd.includes('TRUE') || venda.rd.includes('SIM') ? '✅' : '⬜'}</td>
+                                <td class="px-4 py-2 text-slate-500">{venda.origem}</td>
+                                <td class="px-4 py-2 text-slate-500">{venda.segmento}</td>
+                                <td class="px-4 py-2 text-slate-500 truncate max-w-[150px]" title={venda.produto}>{venda.produto}</td>
+                                <td class="px-4 py-2 text-slate-500">{venda.qualificado}</td>
+                                <td class="px-4 py-2 text-center text-slate-500">{venda.pipefy.includes('TRUE') || venda.pipefy.includes('SIM') ? '🟦' : '⬜'}</td>
+                                <td class="px-4 py-2 text-slate-500 uppercase font-bold text-[10px]">{venda.vendedor}</td>
+                                <td class="px-4 py-2 text-center"><span class="bg-green-100 text-green-800 px-2 py-0.5 rounded text-[10px] font-bold">FECHADO</span></td>
+                                <td class="px-4 py-2 text-right font-mono font-medium text-emerald-700">
                                     {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(venda.valor)}
                                 </td>
-                                <td class="px-6 py-4 whitespace-nowrap"><span class="bg-blue-50 text-blue-700 px-2 py-1 rounded text-xs font-bold">{venda.segmento}</span></td>
-                                <td class="px-6 py-4 text-gray-600 whitespace-nowrap">{venda.origem}</td>
-                                <td class="px-6 py-4 text-gray-500 text-xs uppercase font-bold whitespace-nowrap">{venda.vendedor}</td>
                             </tr>
                         ))
                     )}
@@ -244,88 +277,45 @@ const chartsJSON = JSON.stringify(chartData);
     <div id="chart-data" data-json={chartsJSON} class="hidden"></div>
     
     <script>
-        // Função para inicializar os gráficos apenas quando a página carregar
         function initCharts() {
-            // Verifica se o ApexCharts carregou
-            if (typeof ApexCharts === 'undefined') {
-                console.warn("ApexCharts ainda não carregou. Tentando novamente...");
-                setTimeout(initCharts, 100); // Tenta de novo em 100ms
-                return;
-            }
-
+            if (typeof ApexCharts === 'undefined') { setTimeout(initCharts, 100); return; }
             const dataElement = document.getElementById('chart-data');
             if(!dataElement) return;
-
             const rawData = JSON.parse(dataElement.dataset.json);
 
+            const baseFont = "Inter, sans-serif";
+            const palette = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'];
+
             const commonOpts = {
-                chart: { type: 'bar', height: 250, toolbar: {show: false}, fontFamily: 'inherit', parentHeightOffset: 0 },
-                colors: ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'],
-                plotOptions: { bar: { borderRadius: 3, horizontal: true } },
+                chart: { fontFamily: baseFont, toolbar: {show:false}, background: 'transparent' },
                 dataLabels: { enabled: false },
-                grid: { strokeDashArray: 4, padding: { left: 10, right: 10 } }
+                grid: { borderColor: '#f1f5f9', strokeDashArray: 4 },
+                colors: palette,
+                tooltip: { theme: 'light' }
             };
 
-            // Vendedores
             const vends = Object.entries(rawData.vendedor).sort((a,b) => b[1] - a[1]);
             if(document.querySelector("#chart-vendedor")) {
-                new ApexCharts(document.querySelector("#chart-vendedor"), {
-                    ...commonOpts,
-                    chart: { type: 'bar', height: 250, toolbar: {show: false} }, 
-                    plotOptions: { bar: { borderRadius: 3, horizontal: false, columnWidth: '50%' } },
-                    colors: ['#8B5CF6'],
-                    series: [{ name: 'Leads', data: vends.map(x => x[1]) }],
-                    xaxis: { categories: vends.map(x => x[0]) }
-                }).render();
+                new ApexCharts(document.querySelector("#chart-vendedor"), { ...commonOpts, chart: { type: 'bar', height: 260, toolbar: {show:false} }, plotOptions: { bar: { borderRadius: 4, columnWidth: '40%', distributed: true } }, series: [{ name: 'Leads', data: vends.map(x => x[1]) }], xaxis: { categories: vends.map(x => x[0]), labels: {style:{colors:'#64748b', fontSize:'10px'}} }, legend: { show: false } }).render();
             }
 
-            // Origem
+            // ORIGEM EM BARRAS HORIZONTAIS
+            const origens = Object.entries(rawData.origem).sort((a,b) => b[1] - a[1]);
             if(document.querySelector("#chart-origem")) {
-                new ApexCharts(document.querySelector("#chart-origem"), {
-                    series: Object.values(rawData.origem),
-                    labels: Object.keys(rawData.origem),
-                    chart: { type: 'donut', height: 220 },
-                    legend: { position: 'bottom', fontSize: '11px' },
-                    dataLabels: { enabled: false }
-                }).render();
+                new ApexCharts(document.querySelector("#chart-origem"), { ...commonOpts, chart: { type: 'bar', height: 260, toolbar: {show:false} }, plotOptions: { bar: { borderRadius: 3, horizontal: true, barHeight: '55%', distributed: true } }, series: [{ name: 'Leads', data: origens.map(x => x[1]) }], xaxis: { categories: origens.map(x => x[0]), labels: {style:{colors:'#64748b'}} }, legend: { show: false } }).render();
             }
 
-            // Segmento
             const segs = Object.entries(rawData.segmento).sort((a,b) => b[1] - a[1]).slice(0, 5);
             if(document.querySelector("#chart-segmento")) {
-                new ApexCharts(document.querySelector("#chart-segmento"), {
-                    ...commonOpts,
-                    chart: { type: 'bar', height: 220, toolbar: {show: false} },
-                    series: [{ name: 'Leads', data: segs.map(x => x[1]) }],
-                    xaxis: { categories: segs.map(x => x[0]) }
-                }).render();
+                new ApexCharts(document.querySelector("#chart-segmento"), { ...commonOpts, chart: { type: 'bar', height: 260, toolbar: {show:false} }, plotOptions: { bar: { borderRadius: 3, horizontal: true, barHeight: '50%', distributed: true } }, series: [{ name: 'Leads', data: segs.map(x => x[1]) }], xaxis: { categories: segs.map(x => x[0]), labels: {style:{colors:'#64748b'}} }, legend: { show: false } }).render();
             }
 
-            // Ads vs Org
-            if(document.querySelector("#chart-ads")) {
-                new ApexCharts(document.querySelector("#chart-ads"), {
-                    series: [rawData.organicoVsAds.org, rawData.organicoVsAds.ads],
-                    labels: ['Orgânico', 'Pago'],
-                    chart: { type: 'pie', height: 200 },
-                    colors: ['#10B981', '#3B82F6'],
-                    legend: { position: 'right' }
-                }).render();
-            }
-
-            // Onde Encontrou
-            const ondeData = Object.entries(rawData.ondeEncontrou).sort((a,b) => b[1] - a[1]).slice(0, 10);
-            if(document.querySelector("#chart-onde")) {
-                new ApexCharts(document.querySelector("#chart-onde"), {
-                    ...commonOpts,
-                    chart: { type: 'bar', height: 300, toolbar: {show: false} },
-                    colors: ['#6366f1'],
-                    series: [{ name: 'Ocorrências', data: ondeData.map(x => x[1]) }],
-                    xaxis: { categories: ondeData.map(x => x[0]) }
-                }).render();
+            // STATUS GURU EM ROSCA
+            const statusData = Object.entries(rawData.statusGuru).sort((a,b) => b[1] - a[1]).slice(0, 8);
+            if(document.querySelector("#chart-status")) {
+                new ApexCharts(document.querySelector("#chart-status"), { ...commonOpts, chart: { type: 'donut', height: 320 }, series: statusData.map(x => x[1]), labels: statusData.map(x => x[0]), stroke: { width: 0 }, legend: { position: 'bottom', fontSize: '11px', labels: { colors: '#475569' } }, plotOptions: { pie: { donut: { size: '65%', labels: { show: true, total: { show: true, showAlways:true, fontSize: '14px', fontWeight: 600, color: '#1e293b' } } } } } }).render();
             }
         }
-
-        // Inicia quando o DOM estiver pronto
         window.addEventListener('load', initCharts);
     </script>
 </Layout>
