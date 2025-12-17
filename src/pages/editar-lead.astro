@@ -9,14 +9,15 @@ let data = [];
 let success = false;
 let error = null;
 
-// Carregar Dados
+// Carregar Dados (Lê até a coluna P agora)
 if (sheetName && index !== null) {
     try {
         const sheets = await getAuthSheets();
         const realRow = parseInt(index) + 2; 
+        // Ajuste no range para ler até a coluna P
         const res = await sheets.spreadsheets.values.get({
             spreadsheetId: SPREADSHEET_ID, 
-            range: `'${sheetName}'!A${realRow}:O${realRow}`
+            range: `'${sheetName}'!A${realRow}:P${realRow}`
         });
         data = res.data.values ? res.data.values[0] : [];
     } catch (e) {
@@ -52,16 +53,18 @@ if (Astro.request.method === "POST") {
             fd.get('status_guru'),    // L
             fd.get('pipefy_check') ? "TRUE" : "FALSE", // M
             fd.get('venda'),          // N
-            fd.get('valor')           // O
+            fd.get('valor'),          // O
+            fd.get('data_venda')      // P (Novo Campo: Data da Venda)
         ];
         
         const targetSheet = fd.get('target_sheet');
         const sheets = await getAuthSheets();
         const rowIndex = parseInt(index) + 2;
         
+        // Ajuste no range para gravar até a coluna P
         await sheets.spreadsheets.values.update({
             spreadsheetId: SPREADSHEET_ID,
-            range: `'${targetSheet}'!A${rowIndex}:O${rowIndex}`,
+            range: `'${targetSheet}'!A${rowIndex}:P${rowIndex}`,
             valueInputOption: 'USER_ENTERED',
             requestBody: { values: [updated] },
         });
@@ -83,6 +86,7 @@ const isChecked = (i) => {
 const rawOrigem = v(3);
 const isAds = rawOrigem.includes('ADS') || rawOrigem.includes('LP');
 const cleanOrigem = rawOrigem.replace(' ADS', '').trim();
+const today = new Date().toISOString().split('T')[0]; // Data de hoje para preenchimento automático
 ---
 
 <Layout title="Editar Lead">
@@ -108,7 +112,7 @@ const cleanOrigem = rawOrigem.replace(' ADS', '').trim();
                         <input name="nome" value={v(0)} required class="input-form font-bold text-slate-900">
                     </div>
                     <div class="md:col-span-1">
-                        <label class="label-form">Data *</label>
+                        <label class="label-form">Data Entrada *</label>
                         <input type="date" name="data" value={v(1)} class="input-form">
                     </div>
 
@@ -227,10 +231,10 @@ const cleanOrigem = rawOrigem.replace(' ADS', '').trim();
                         </label>
                     </div>
 
-                    <div class="md:col-span-9 grid grid-cols-2 gap-6 pl-0 md:pl-6 border-l border-slate-200">
+                    <div class="md:col-span-9 grid grid-cols-3 gap-6 pl-0 md:pl-6 border-l border-slate-200">
                         <div>
                             <label class="label-form text-slate-700">Venda Fechada?</label>
-                            <select name="venda" class="input-form font-medium">
+                            <select name="venda" id="select_venda" class="input-form font-medium" onchange="toggleDate()">
                                 <option value="">Em aberto</option>
                                 <option selected={v(13) === 'Sim'} value="Sim">Sim (Venda Realizada)</option>
                                 <option selected={v(13) === 'Não'} value="Não">Não (Perdido)</option>
@@ -239,6 +243,10 @@ const cleanOrigem = rawOrigem.replace(' ADS', '').trim();
                         <div>
                             <label class="label-form text-slate-700">Valor do Pedido (R$)</label>
                             <input name="valor" value={v(14)} class="input-form font-mono text-right font-bold text-slate-800">
+                        </div>
+                        <div id="div_data_venda" class={v(13) === 'Sim' ? '' : 'opacity-50 pointer-events-none'}>
+                            <label class="label-form text-emerald-700">Data do Fechamento</label>
+                            <input type="date" name="data_venda" id="input_data_venda" value={v(15)} class="input-form border-emerald-300 bg-emerald-50">
                         </div>
                     </div>
                 </div>
@@ -251,6 +259,27 @@ const cleanOrigem = rawOrigem.replace(' ADS', '').trim();
             </div>
         </form>
     </div>
+
+    <script define:vars={{today}}>
+        function toggleDate() {
+            const select = document.getElementById('select_venda');
+            const div = document.getElementById('div_data_venda');
+            const input = document.getElementById('input_data_venda');
+
+            if (select.value === 'Sim') {
+                div.classList.remove('opacity-50', 'pointer-events-none');
+                // Se estiver vazio, preenche com hoje
+                if (!input.value) input.value = today;
+            } else {
+                div.classList.add('opacity-50', 'pointer-events-none');
+                // Opcional: Limpar se mudar para "Não" ou "Em aberto". 
+                // Comentei para evitar apagar dados acidentalmente se o usuário só clicar errado.
+                // input.value = ''; 
+            }
+        }
+        // Roda ao carregar para definir o estado inicial correto
+        window.addEventListener('DOMContentLoaded', toggleDate);
+    </script>
 
     <style>
         .label-form { @apply block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wide; }
