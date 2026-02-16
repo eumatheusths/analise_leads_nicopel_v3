@@ -2,12 +2,10 @@
 import Layout from '../layouts/Layout.astro';
 import { getAuthSheets, SPREADSHEET_ID, getCurrentMonthSheetName, MONTHS, findRealSheetName } from '../lib/sheets';
 
-// --- CONFIGURAÇÃO ---
 const urlMonth = Astro.url.searchParams.get('month');
 const urlView = Astro.url.searchParams.get('view') || 'geral'; 
 const selectedMonth = urlMonth || getCurrentMonthSheetName();
 
-// Variáveis
 let metrics = { total: 0, organicos: 0, qualificados: 0, vendas: 0, desqualificados: 0, faturamento: 0, rd: 0, pipefy: 0 };
 let chartData = { origem: {}, segmento: {}, vendedor: {}, statusGuru: {}, organicoVsAds: { org: 0, ads: 0 } };
 let closedSalesList = [];
@@ -18,56 +16,47 @@ let errorMsg = null;
 let taxaConversao = 0;
 let ticketMedio = 0;
 
-// Custos
+// Variáveis para o cálculo da média do Ciclo (Lead Time)
+let totalCicloDias = 0;
+let vendasComCiclo = 0;
+let mediaCiclo = 0;
+
 let investimento = 0;
 let cpl = 0;
 let cac = 0;
 
 const viewTitles = { 'geral': 'Visão Geral', 'pago': 'Tráfego Pago', 'organico': 'Orgânico' };
 
-// --- FUNÇÕES AUXILIARES DE DATA (ATUALIZADAS) ---
+// FUNÇÃO BLINDADA PARA DATAS
 function parseDataBR(dataStr) {
     if (!dataStr) return null;
     const str = String(dataStr).trim();
-    
-    // Se vier no padrão YYYY-MM-DD
-    if (str.includes('-')) {
-        const parts = str.split('-');
-        if (parts[0].length === 4) { // 2026-02-16
-            return new Date(`${parts[0]}-${parts[1]}-${parts[2]}T12:00:00`);
-        } else if (parts[2].length === 4) { // 16-02-2026
-            return new Date(`${parts[2]}-${parts[1]}-${parts[0]}T12:00:00`);
-        }
-    }
-    
-    // Se vier com barras (DD/MM/YYYY)
+    if (!str) return null;
+    let dia, mes, ano;
     if (str.includes('/')) {
         const parts = str.split('/');
-        let ano = parts[2];
-        if (ano.length === 2) ano = '20' + ano; 
-        return new Date(`${ano}-${parts[1]}-${parts[0]}T12:00:00`); 
-    }
-    
-    return new Date(str); 
+        dia = parseInt(parts[0], 10); mes = parseInt(parts[1], 10); ano = parseInt(parts[2], 10);
+        if (ano < 100) ano += 2000;
+    } else if (str.includes('-')) {
+        const parts = str.split('-');
+        if (parts[0].length === 4) { ano = parseInt(parts[0], 10); mes = parseInt(parts[1], 10); dia = parseInt(parts[2], 10); } 
+        else { dia = parseInt(parts[0], 10); mes = parseInt(parts[1], 10); ano = parseInt(parts[2], 10); }
+    } else { return null; }
+    const d = new Date(ano, mes - 1, dia);
+    return isNaN(d.getTime()) ? null : d;
 }
 
 function calcCiclo(dataEntrada, dataVenda) {
-    if (!dataEntrada || !dataVenda) return null;
-    
     const d1 = parseDataBR(dataEntrada);
     const d2 = parseDataBR(dataVenda);
-    
-    if (!d1 || !d2 || isNaN(d1) || isNaN(d2)) return null;
-    
-    const diffTime = Math.abs(d2 - d1);
+    if (!d1 || !d2) return null;
+    const diffTime = d2.getTime() - d1.getTime();
     const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24)); 
-    return diffDays;
+    return diffDays >= 0 ? diffDays : 0;
 }
 
 try {
     const sheets = await getAuthSheets();
-    
-    // 1. BUSCAR INVESTIMENTO
     const monthIndex = MONTHS.indexOf(selectedMonth);
     if (monthIndex >= 0) {
         try {
@@ -81,7 +70,6 @@ try {
     const foundName = await findRealSheetName(sheets, selectedMonth);
     if (foundName) realSheetName = foundName;
 
-    // 2. LÊ ATÉ A COLUNA "P" (Índice 15)
     const monthResponse = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
         range: `'${realSheetName}'!A2:P1000`, 
@@ -93,7 +81,7 @@ try {
 
     monthRows.forEach(row => {
         const cliente = row[0] || 'Sem nome';           
-        const dataEntrada = row[1] || ''; // Coluna B
+        const dataEntrada = row[1] || ''; 
         const rdCheck = (row[2] || '').toUpperCase();   
         const origem = (row[3] || '-').trim();          
         const segmento = (row[5] || '-').trim();        
@@ -106,16 +94,11 @@ try {
         const pipefyCheck = (row[12] || '').toUpperCase();      
         const vendaStatus = (row[13] || '').trim();             
         const isVendaSim = vendaStatus.toLowerCase() === 'sim';
-        
-        const valorStr = row[14] ? row[14].replace('R$', '').replace(/\./g, '').replace(',', '.').trim() : '0'; 
-        const valorFloat = parseFloat(valorStr) || 0;
-
-        // COLUNA P (15) - DATA DA VENDA
+        const valorFloat = parseFloat(row[14] ? row[14].replace('R$', '').replace(/\./g, '').replace(',', '.').trim() : '0') || 0;
         const dataVenda = row[15] || ''; 
 
         const origemLow = origem.toLowerCase();
-        let isPago = false;
-        if (origemLow.includes('ads') || origemLow.includes('instagram') || origemLow.includes('face') || origemLow.includes('google') || origemLow.includes('patrocinado') || origemLow.includes('rd')) isPago = true;
+        let isPago = origemLow.includes('ads') || origemLow.includes('instagram') || origemLow.includes('face') || origemLow.includes('google') || origemLow.includes('patrocinado') || origemLow.includes('rd');
 
         if (urlView === 'pago' && !isPago) return;
         if (urlView === 'organico' && isPago) return;
@@ -124,7 +107,6 @@ try {
         if (!isPago) metrics.organicos++;
         if (qualificado.toLowerCase() === 'sim') metrics.qualificados++;
         if (qualificado.toLowerCase() === 'não' || qualificado.toLowerCase().includes('aguardando')) metrics.desqualificados++;
-        
         if (rdCheck.includes('TRUE') || rdCheck.includes('SIM')) metrics.rd++;
         if (pipefyCheck.includes('TRUE') || pipefyCheck.includes('SIM')) metrics.pipefy++;
 
@@ -132,22 +114,15 @@ try {
             metrics.vendas++;
             metrics.faturamento += valorFloat;
             
-            // CALCULA O CICLO
             const diasCiclo = calcCiclo(dataEntrada, dataVenda);
             
-            closedSalesList.push({ 
-                cliente, 
-                rd: rdCheck, 
-                origem, 
-                segmento, 
-                produto, 
-                qualificado, 
-                pipefy: pipefyCheck, 
-                vendedor, 
-                status: vendaStatus, 
-                valor: valorFloat,
-                ciclo: diasCiclo 
-            });
+            // Acumula os dias para fazer a média do mês
+            if (diasCiclo !== null) {
+                totalCicloDias += diasCiclo;
+                vendasComCiclo++;
+            }
+
+            closedSalesList.push({ cliente, rd: rdCheck, origem, segmento, produto, qualificado, pipefy: pipefyCheck, vendedor, status: vendaStatus, valor: valorFloat, ciclo: diasCiclo });
         } else {
             if (motivoRaw.trim().length > 1) {
                 const mFmt = motivoRaw.trim().charAt(0).toUpperCase() + motivoRaw.trim().slice(1).toLowerCase();
@@ -158,21 +133,14 @@ try {
         chartData.origem[origem] = (chartData.origem[origem] || 0) + 1;
         chartData.segmento[segmento] = (chartData.segmento[segmento] || 0) + 1;
         chartData.vendedor[vendedor] = (chartData.vendedor[vendedor] || 0) + 1;
-        
-        if (statusGuru.length > 1) {
-             const sgClean = statusGuru.charAt(0).toUpperCase() + statusGuru.slice(1).toLowerCase();
-             chartData.statusGuru[sgClean] = (chartData.statusGuru[sgClean] || 0) + 1;
-        }
-        if (produto.length > 2) {
-            const pFmt = produto.charAt(0).toUpperCase() + produto.slice(1).toLowerCase();
-            productCountMap[pFmt] = (productCountMap[pFmt] || 0) + 1;
-        }
-
+        if (statusGuru.length > 1) { chartData.statusGuru[statusGuru.charAt(0).toUpperCase() + statusGuru.slice(1).toLowerCase()] = (chartData.statusGuru[statusGuru.charAt(0).toUpperCase() + statusGuru.slice(1).toLowerCase()] || 0) + 1; }
+        if (produto.length > 2) { productCountMap[produto.charAt(0).toUpperCase() + produto.slice(1).toLowerCase()] = (productCountMap[produto.charAt(0).toUpperCase() + produto.slice(1).toLowerCase()] || 0) + 1; }
         if (isPago) chartData.organicoVsAds.ads++; else chartData.organicoVsAds.org++;
     });
 
     if (metrics.total > 0) taxaConversao = (metrics.vendas / metrics.total) * 100;
     if (metrics.vendas > 0) ticketMedio = metrics.faturamento / metrics.vendas;
+    if (vendasComCiclo > 0) mediaCiclo = Math.round(totalCicloDias / vendasComCiclo);
 
     if (urlView === 'organico') { cpl = 0; cac = 0; } 
     else { if (metrics.total > 0) cpl = investimento / metrics.total; if (metrics.vendas > 0) cac = investimento / metrics.vendas; }
@@ -183,36 +151,29 @@ try {
 
 } catch (e) { errorMsg = "Erro: " + e.message; }
 
-const serverData = JSON.stringify({ metrics, chartData, top5LossReasons, top5Products, taxaConversao, ticketMedio, cpl, cac, investimento });
+const serverData = JSON.stringify({ metrics, chartData, top5LossReasons, top5Products, taxaConversao, ticketMedio, cpl, cac, investimento, mediaCiclo });
 ---
 
 <Layout title="Dashboard Modular">
-    
     <div class="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 border-b border-slate-200/60 pb-6 bg-white/80 backdrop-blur-md sticky top-0 z-30 pt-4 -mx-6 px-6 lg:-mx-8 lg:px-8">
         <div>
             <h2 class="text-3xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
-                Dashboard
-                <span class="text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full uppercase tracking-wider">Analytics</span>
+                Dashboard <span class="text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full uppercase tracking-wider">Analytics</span>
             </h2>
             <div class="flex items-center gap-3 text-sm mt-1.5">
                 <span class="text-slate-400 font-medium">Visualizando:</span>
                 <span class="font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded text-xs uppercase tracking-wide border border-slate-200">{realSheetName}</span>
-                <span class="text-slate-300">/</span>
-                <span class="font-bold text-slate-700">{viewTitles[urlView]}</span>
+                <span class="text-slate-300">/</span><span class="font-bold text-slate-700">{viewTitles[urlView]}</span>
             </div>
         </div>
-        
         <div class="flex flex-col sm:flex-row gap-3 w-full md:w-auto mt-4 md:mt-0">
             <form method="GET" class="relative group">
                 <input type="hidden" name="view" value={urlView} />
                 <select name="month" onchange="this.form.submit()" class="appearance-none bg-white border border-slate-200 text-slate-700 py-2.5 pl-4 pr-10 rounded-lg shadow-sm text-sm font-bold focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-transparent cursor-pointer transition hover:border-slate-300">
                     {MONTHS.map(m => <option value={m} selected={m === selectedMonth}>{m}</option>)}
                 </select>
-                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-slate-400 group-hover:text-slate-600 transition">
-                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
-                </div>
+                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-slate-400 group-hover:text-slate-600 transition"><svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg></div>
             </form>
-
             <div class="bg-white border border-slate-200 rounded-lg flex p-1 shadow-sm">
                 <a href={`/?month=${selectedMonth}&view=geral`} class={`px-4 py-1.5 rounded-md text-xs font-bold uppercase tracking-wide transition-all ${urlView === 'geral' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'}`}>Geral</a>
                 <a href={`/?month=${selectedMonth}&view=pago`} class={`px-4 py-1.5 rounded-md text-xs font-bold uppercase tracking-wide transition-all ${urlView === 'pago' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:text-blue-600 hover:bg-blue-50'}`}>Pago</a>
@@ -242,22 +203,13 @@ const serverData = JSON.stringify({ metrics, chartData, top5LossReasons, top5Pro
 
     <div class="bg-white border border-slate-200 rounded-xl shadow-[0_2px_15px_-3px_rgba(0,0,0,0.07)] overflow-hidden mb-12">
         <div class="px-6 py-5 border-b border-slate-100 bg-white flex justify-between items-center">
-            <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide flex items-center gap-2">
-                <span class="w-2 h-2 rounded-full bg-emerald-500"></span> Extrato de Vendas
-            </h3>
+            <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-emerald-500"></span> Extrato de Vendas</h3>
             <span class="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded border border-slate-200 uppercase">{closedSalesList.length} registros</span>
         </div>
         <div class="overflow-x-auto">
             <table class="min-w-full text-xs text-left whitespace-nowrap">
                 <thead class="bg-slate-50/50 text-slate-500 font-bold border-b border-slate-200 text-[10px] uppercase tracking-wider">
-                    <tr>
-                        <th class="px-6 py-3">Ciclo</th> <th class="px-6 py-3">Cliente</th>
-                        <th class="px-6 py-3">Origem</th>
-                        <th class="px-6 py-3">Segmento</th>
-                        <th class="px-6 py-3">Produto</th>
-                        <th class="px-6 py-3">Vend.</th>
-                        <th class="px-6 py-3 text-right">Valor</th>
-                    </tr>
+                    <tr><th class="px-6 py-3">Ciclo</th> <th class="px-6 py-3">Cliente</th><th class="px-6 py-3">Origem</th><th class="px-6 py-3">Segmento</th><th class="px-6 py-3">Produto</th><th class="px-6 py-3">Vend.</th><th class="px-6 py-3 text-right">Valor</th></tr>
                 </thead>
                 <tbody class="divide-y divide-slate-100 bg-white">
                     {closedSalesList.length === 0 ? (
@@ -270,18 +222,14 @@ const serverData = JSON.stringify({ metrics, chartData, top5LossReasons, top5Pro
                                         <span class={`px-2 py-1 rounded-md text-[10px] font-bold border ${venda.ciclo <= 7 ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : venda.ciclo <= 30 ? 'bg-yellow-50 text-yellow-700 border-yellow-100' : 'bg-red-50 text-red-700 border-red-100'}`}>
                                             {venda.ciclo === 0 ? 'No dia' : venda.ciclo + ' dias'}
                                         </span>
-                                    ) : (
-                                        <span class="text-slate-300">-</span>
-                                    )}
+                                    ) : (<span class="text-slate-300">-</span>)}
                                 </td>
                                 <td class="px-6 py-3 font-bold text-slate-700 group-hover:text-blue-700 transition-colors">{venda.cliente}</td>
                                 <td class="px-6 py-3 text-slate-500">{venda.origem}</td>
                                 <td class="px-6 py-3 text-slate-500"><span class="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-bold border border-slate-200">{venda.segmento}</span></td>
                                 <td class="px-6 py-3 text-slate-500 truncate max-w-[180px]" title={venda.produto}>{venda.produto}</td>
                                 <td class="px-6 py-3 text-slate-400 font-bold uppercase text-[10px]">{venda.vendedor}</td>
-                                <td class="px-6 py-3 text-right font-mono font-bold text-emerald-700 bg-emerald-50/10 group-hover:bg-emerald-50/30">
-                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(venda.valor)}
-                                </td>
+                                <td class="px-6 py-3 text-right font-mono font-bold text-emerald-700 bg-emerald-50/10 group-hover:bg-emerald-50/30">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(venda.valor)}</td>
                             </tr>
                         ))
                     )}
@@ -299,6 +247,7 @@ const serverData = JSON.stringify({ metrics, chartData, top5LossReasons, top5Pro
             { id: 'kpi_vendas', label: 'Vendas Fechadas', type: 'kpi', colSpan: 1, color: 'emerald' },
             { id: 'kpi_faturamento', label: 'Faturamento', type: 'kpi', colSpan: 1, color: 'emerald' },
             { id: 'kpi_ticket', label: 'Ticket Médio', type: 'kpi', colSpan: 1, color: 'purple' },
+            { id: 'kpi_ciclo', label: 'Lead Time Médio', type: 'kpi', colSpan: 1, color: 'blue' }, 
             { id: 'kpi_cpl', label: 'Custo por Lead', type: 'kpi', colSpan: 1, color: 'orange' }, 
             { id: 'kpi_cac', label: 'CAC (Aquisição)', type: 'kpi', colSpan: 1, color: 'rose' },
             { id: 'list_loss', label: 'Top Perdas', type: 'list', colSpan: 2 },
@@ -349,9 +298,7 @@ const serverData = JSON.stringify({ metrics, chartData, top5LossReasons, top5Pro
                 const closeBtn = `<button onclick="toggleWidget('${id}')" class="absolute top-4 right-4 text-slate-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity z-10"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>`;
                 if (widget.type !== 'kpi' && widget.type !== 'mini') {
                     div.innerHTML = `${closeBtn}<h4 class="text-[11px] font-extrabold text-slate-400 uppercase tracking-widest mb-6 border-b border-slate-50 pb-2">${widget.label}</h4><div class="flex-1 content-area relative min-h-[240px]"></div>`;
-                } else {
-                    div.innerHTML = `${closeBtn}<div class="content-area h-full flex flex-col justify-between"></div>`;
-                }
+                } else { div.innerHTML = `${closeBtn}<div class="content-area h-full flex flex-col justify-between"></div>`; }
                 grid.appendChild(div);
                 injectWidgetContent(id, div.querySelector('.content-area') || div, widget);
             });
@@ -368,6 +315,7 @@ const serverData = JSON.stringify({ metrics, chartData, top5LossReasons, top5Pro
                 else if (id === 'kpi_vendas') { val = m.vendas; sub = `${serverData.taxaConversao.toFixed(1)}% conversão`; colorClass = 'text-emerald-700'; }
                 else if (id === 'kpi_faturamento') { val = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(m.faturamento); sub = 'Receita Bruta'; colorClass = 'text-emerald-800'; }
                 else if (id === 'kpi_ticket') { val = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(serverData.ticketMedio); sub = 'Médio p/ Venda'; colorClass = 'text-purple-800'; }
+                else if (id === 'kpi_ciclo') { val = serverData.mediaCiclo + ' dias'; sub = 'Tempo médio p/ venda'; colorClass = 'text-blue-800'; }
                 else if (id === 'kpi_cpl') { val = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(serverData.cpl); sub = 'Custo / Lead'; colorClass = 'text-orange-700'; }
                 else if (id === 'kpi_cac') { val = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(serverData.cac); sub = 'Custo / Venda'; colorClass = 'text-rose-700'; }
 
@@ -394,9 +342,7 @@ const serverData = JSON.stringify({ metrics, chartData, top5LossReasons, top5Pro
                 const html = serverData.top5Products.length === 0 ? '<p class="text-xs text-slate-400 italic text-center py-10">Sem dados</p>' : `<table class="w-full text-xs text-left"><tbody class="divide-y divide-slate-50">${serverData.top5Products.map((i, idx) => `<tr class="hover:bg-slate-50 transition"><td class="py-2.5 pr-2 text-slate-600 font-medium truncate max-w-[200px]"><span class="mr-2 text-[10px] text-slate-300 font-mono">#${idx+1}</span>${i.produto}</td><td class="text-right font-bold text-slate-800">${i.qtd}</td></tr>`).join('')}</tbody></table>`;
                 container.innerHTML = html;
             }
-            else if (id.startsWith('chart_')) {
-                renderApexChart(id, container, serverData);
-            }
+            else if (id.startsWith('chart_')) { renderApexChart(id, container, serverData); }
         }
 
         function renderApexChart(id, container, data) {
@@ -405,15 +351,7 @@ const serverData = JSON.stringify({ metrics, chartData, top5LossReasons, top5Pro
             const baseFont = "Inter, sans-serif";
             const palette = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#d946ef', '#ec4899', '#8b5cf6']; 
             
-            const commonOpts = {
-                chart: { type: 'bar', height: '100%', fontFamily: baseFont, toolbar: {show:false}, parentHeightOffset: 0 },
-                dataLabels: { enabled: false },
-                grid: { borderColor: '#f1f5f9', strokeDashArray: 4, padding: {top:0, bottom:0} },
-                colors: palette,
-                tooltip: { theme: 'light', style: {fontSize: '12px'} },
-                fill: { type: 'gradient', gradient: { shade: 'light', type: 'vertical', shadeIntensity: 0.25, inverseColors: false, opacityFrom: 1, opacityTo: 0.85, stops: [0, 100] } }
-            };
-
+            const commonOpts = { chart: { type: 'bar', height: '100%', fontFamily: baseFont, toolbar: {show:false}, parentHeightOffset: 0 }, dataLabels: { enabled: false }, grid: { borderColor: '#f1f5f9', strokeDashArray: 4, padding: {top:0, bottom:0} }, colors: palette, tooltip: { theme: 'light', style: {fontSize: '12px'} }, fill: { type: 'gradient', gradient: { shade: 'light', type: 'vertical', shadeIntensity: 0.25, inverseColors: false, opacityFrom: 1, opacityTo: 0.85, stops: [0, 100] } } };
             let opts = {};
 
             if (id === 'chart_vendedor') {
@@ -432,13 +370,11 @@ const serverData = JSON.stringify({ metrics, chartData, top5LossReasons, top5Pro
                 const stats = Object.entries(rawData.statusGuru).sort((a,b) => b[1] - a[1]).slice(0, 8);
                 opts = { ...commonOpts, chart: { type: 'donut', height: 240, fontFamily: baseFont }, fill: { type: 'solid' }, series: stats.map(x => x[1]), labels: stats.map(x => x[0]), legend: { position: 'right', fontSize: '11px', labels: { colors: '#475569' } }, stroke: {width:2, colors:['#ffffff']}, plotOptions: { pie: { donut: { size: '65%', labels: { show: true, total: { show: true, showAlways:true, fontSize: '16px', fontWeight: 700, color: '#1e293b' } } } } } };
             }
-
             new ApexCharts(container, opts).render();
         }
 
         window.toggleWidget = function(id) {
-            if (activeWidgets.includes(id)) { activeWidgets = activeWidgets.filter(w => w !== id); } 
-            else { activeWidgets.push(id); }
+            if (activeWidgets.includes(id)) { activeWidgets = activeWidgets.filter(w => w !== id); } else { activeWidgets.push(id); }
             localStorage.setItem('nicopel_dashboard_config', JSON.stringify(activeWidgets));
             renderInterface();
         }
@@ -447,10 +383,8 @@ const serverData = JSON.stringify({ metrics, chartData, top5LossReasons, top5Pro
             const list = document.getElementById('available-widgets-list');
             list.innerHTML = '';
             const inactive = ALL_WIDGETS.filter(w => !activeWidgets.includes(w.id));
-            if (inactive.length === 0) {
-                list.innerHTML = '<span class="text-[10px] text-slate-400 italic px-3 py-2 block text-center">Todos ativos</span>';
-            } else {
-                inactive.forEach(w => {
+            if (inactive.length === 0) { list.innerHTML = '<span class="text-[10px] text-slate-400 italic px-3 py-2 block text-center">Todos ativos</span>'; } 
+            else { inactive.forEach(w => {
                     const btn = document.createElement('button');
                     btn.className = "text-left text-xs font-bold text-slate-600 hover:bg-slate-50 hover:text-blue-600 px-3 py-2 rounded-lg transition w-full flex justify-between items-center group";
                     btn.innerHTML = `<span>${w.label}</span> <span class="bg-slate-100 text-slate-400 group-hover:bg-blue-100 group-hover:text-blue-600 px-1.5 rounded text-[10px]">+</span>`;
@@ -462,7 +396,6 @@ const serverData = JSON.stringify({ metrics, chartData, top5LossReasons, top5Pro
 
         const btnAdd = document.getElementById('add-widget-btn');
         const menuAdd = document.getElementById('add-menu');
-        
         if (btnAdd && menuAdd) {
             btnAdd.addEventListener('click', (e) => { e.stopPropagation(); menuAdd.classList.toggle('hidden'); });
             document.addEventListener('click', () => { menuAdd.classList.add('hidden'); });
@@ -470,8 +403,7 @@ const serverData = JSON.stringify({ metrics, chartData, top5LossReasons, top5Pro
         }
 
         window.addEventListener('load', () => {
-            if (typeof ApexCharts === 'undefined') { setTimeout(renderInterface, 300); } 
-            else { renderInterface(); }
+            if (typeof ApexCharts === 'undefined') { setTimeout(renderInterface, 300); } else { renderInterface(); }
         });
     </script>
 </Layout>

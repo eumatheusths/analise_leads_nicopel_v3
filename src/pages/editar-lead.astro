@@ -37,10 +37,29 @@ if (Astro.request.method === "POST") {
             origemFinal = `${origemFinal} ADS`;
         }
 
-        // Blindagem total contra campos vazios (impede que as colunas se desorganizem)
+        // FUNÇÃO NOVA: Converte a data do HTML (YYYY-MM-DD) de volta para o Sheets (DD/MM/YYYY)
+        const formatDateForSheet = (dateStr) => {
+            if (!dateStr) return '';
+            if (dateStr.includes('-')) {
+                const parts = dateStr.split('-');
+                if (parts[0].length === 4) { // Verifica se começa com o Ano
+                    return `${parts[2]}/${parts[1]}/${parts[0]}`; // Retorna DD/MM/YYYY
+                }
+            }
+            return dateStr;
+        };
+
+        const statusVenda = fd.get('venda') || '';
+        // Regra de Ouro: Se a venda não for "Sim", garantimos que a Data de Venda vai vazia
+        let dataVendaFinal = fd.get('data_venda') || '';
+        if (statusVenda !== 'Sim') {
+            dataVendaFinal = ''; 
+        }
+
+        // Blindagem total contra campos vazios e formatação de datas
         const updated = [
             fd.get('nome') || '',           // A
-            fd.get('data') || '',           // B
+            formatDateForSheet(fd.get('data')), // B (Data de Entrada bonita no Sheets)
             fd.get('rd_check') ? "TRUE" : "FALSE", // C
             origemFinal || '',              // D
             fd.get('numero') || '',         // E
@@ -52,9 +71,9 @@ if (Astro.request.method === "POST") {
             fd.get('delegado') || '',       // K
             fd.get('status_guru') || '',    // L
             fd.get('pipefy_check') ? "TRUE" : "FALSE", // M
-            fd.get('venda') || '',          // N
+            statusVenda,                    // N
             fd.get('valor') || '',          // O
-            fd.get('data_venda') || ''      // P (Data da Venda mapeada perfeitamente)
+            formatDateForSheet(dataVendaFinal) // P (Data da Venda bonita no Sheets)
         ];
         
         const targetSheet = fd.get('target_sheet');
@@ -82,8 +101,7 @@ const isChecked = (i) => {
     return val === 'TRUE' || val === 'VERDADEIRO' || val === 'SIM';
 };
 
-// --- FUNÇÃO PARA CORRIGIR O BUG DO INPUT TYPE="DATE" ---
-// O HTML só aceita "YYYY-MM-DD". Esta função converte o padrão Brasileiro do Sheets para o HTML.
+// Converte o padrão Brasileiro do Sheets (DD/MM/YYYY) para o HTML (YYYY-MM-DD) conseguir ler
 const formatForDateInput = (dateStr) => {
     if (!dateStr) return '';
     const str = String(dateStr).trim();
@@ -127,7 +145,6 @@ const today = new Date().toISOString().split('T')[0];
                     </div>
                     <div class="md:col-span-1">
                         <label class="label-form">Data Entrada *</label>
-                        {/* Uso da formatação correta de data para o input HTML */}
                         <input type="date" name="data" value={formatForDateInput(v(1))} class="input-form">
                     </div>
 
@@ -262,7 +279,6 @@ const today = new Date().toISOString().split('T')[0];
                         </div>
                         <div id="div_data_venda" class={v(13) === 'Sim' ? '' : 'opacity-50 pointer-events-none'}>
                             <label class="label-form text-emerald-700">Data do Fechamento</label>
-                            {/* Uso da formatação correta de data para exibir a data da venda corretamente */}
                             <input type="date" name="data_venda" id="input_data_venda" value={formatForDateInput(v(15))} class="input-form border-emerald-300 bg-emerald-50">
                         </div>
                     </div>
@@ -285,13 +301,14 @@ const today = new Date().toISOString().split('T')[0];
 
             if (select.value === 'Sim') {
                 div.classList.remove('opacity-50', 'pointer-events-none');
-                // Se estiver vazio, preenche com hoje
                 if (!input.value) input.value = today;
             } else {
                 div.classList.add('opacity-50', 'pointer-events-none');
+                // Quando muda para "Não" ou "Em aberto", o JavaScript não apaga o input visualmente 
+                // para o caso de ter sido um clique sem querer, mas o Backend no Astro já vai 
+                // garantir que a data não é salva na planilha.
             }
         }
-        // Roda ao carregar para definir o estado inicial correto
         window.addEventListener('DOMContentLoaded', toggleDate);
     </script>
 

@@ -7,54 +7,75 @@ let error = null;
 const defaultMonth = getCurrentMonthSheetName();
 
 if (Astro.request.method === "POST") {
-  try {
-    const data = await Astro.request.formData();
-    const sheets = await getAuthSheets();
-    
-    const targetMonth = data.get('target_month') || defaultMonth;
-    const realSheetName = await findRealSheetName(sheets, targetMonth);
-    
-    if (!realSheetName) throw new Error(`A aba "${targetMonth}" não existe na planilha.`);
+    try {
+        const data = await Astro.request.formData();
+        const sheets = await getAuthSheets();
+        
+        const targetMonth = data.get('target_month') || defaultMonth;
+        const realSheetName = await findRealSheetName(sheets, targetMonth);
+        
+        if (!realSheetName) throw new Error(`A aba "${targetMonth}" não existe na planilha.`);
 
-    // LÓGICA DE TRÁFEGO PAGO
-    let origemFinal = data.get('origem');
-    const tipoTrafego = data.get('tipo_trafego');
-    
-    // Se for Pago e não for LP (que já é pago por natureza), adiciona a tag ADS
-    if (tipoTrafego === 'PAGO' && !origemFinal.includes('LP')) {
-        origemFinal = `${origemFinal} ADS`;
+        // LÓGICA DE TRÁFEGO PAGO
+        let origemFinal = data.get('origem');
+        const tipoTrafego = data.get('tipo_trafego');
+        
+        if (tipoTrafego === 'PAGO' && !origemFinal.includes('LP')) {
+            origemFinal = `${origemFinal} ADS`;
+        }
+
+        // FUNÇÃO DE CONVERSÃO: HTML (YYYY-MM-DD) -> Sheets (DD/MM/YYYY)
+        const formatDateForSheet = (dateStr) => {
+            if (!dateStr) return '';
+            if (dateStr.includes('-')) {
+                const parts = dateStr.split('-');
+                if (parts[0].length === 4) {
+                    return `${parts[2]}/${parts[1]}/${parts[0]}`; 
+                }
+            }
+            return dateStr;
+        };
+
+        const statusVenda = data.get('venda') || '';
+        let dataVendaFinal = data.get('data_venda') || '';
+        
+        // Se não for "Sim", garante que não salva data nenhuma no fechamento
+        if (statusVenda !== 'Sim') {
+            dataVendaFinal = ''; 
+        }
+
+        // --- MAPEAMENTO BLINDADO (A-P) ---
+        const row = [
+            data.get('nome_cliente') || '',       // A [0]
+            formatDateForSheet(data.get('data')), // B [1] (Data formatada para BR)
+            data.get('rd_check') ? "TRUE" : "FALSE", // C [2]
+            origemFinal || '',                    // D [3]
+            data.get('numero') || '',             // E [4]
+            data.get('seguimento') || '',         // F [5]
+            data.get('produto') || '',            // G [6]
+            data.get('quantidade') || '',         // H [7]
+            data.get('qualificado') || '',        // I [8]
+            data.get('motivo') || '',             // J [9]
+            data.get('delegado') || '',           // K [10]
+            data.get('status_guru') || '',        // L [11]
+            data.get('pipefy_check') ? "TRUE" : "FALSE", // M [12]
+            statusVenda,                          // N [13]
+            data.get('valor') || '',              // O [14]
+            formatDateForSheet(dataVendaFinal)    // P [15] (Nova Coluna para caso venda na hora)
+        ];
+
+        // Atualizado para abranger A:P
+        await sheets.spreadsheets.values.append({
+            spreadsheetId: SPREADSHEET_ID,
+            range: `'${realSheetName}'!A:P`,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: { values: [row] },
+        });
+
+        success = true;
+    } catch (e) {
+        error = "Erro ao salvar: " + e.message;
     }
-
-    // --- MAPEAMENTO (A-O) ---
-    const row = [
-      data.get('nome_cliente'),           // A [0]
-      data.get('data'),                   // B [1]
-      data.get('rd_check') ? "TRUE" : "FALSE", // C [2]
-      origemFinal,                        // D [3] (Origem ajustada)
-      data.get('numero'),                 // E [4]
-      data.get('seguimento'),             // F [5]
-      data.get('produto'),                // G [6]
-      data.get('quantidade'),             // H [7]
-      data.get('qualificado'),            // I [8]
-      data.get('motivo'),                 // J [9]
-      data.get('delegado'),               // K [10]
-      data.get('status_guru'),            // L [11]
-      data.get('pipefy_check') ? "TRUE" : "FALSE", // M [12]
-      data.get('venda'),                  // N [13]
-      data.get('valor')                   // O [14]
-    ];
-
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: SPREADSHEET_ID,
-      range: `'${realSheetName}'!A:O`,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [row] },
-    });
-
-    success = true;
-  } catch (e) {
-    error = "Erro ao salvar: " + e.message;
-  }
 }
 
 const today = new Date().toISOString().split('T')[0];
@@ -70,7 +91,7 @@ const today = new Date().toISOString().split('T')[0];
             <a href="/" class="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-300 rounded hover:bg-slate-50 transition">Cancelar</a>
         </div>
 
-        {success && <div class="bg-emerald-50 border border-emerald-200 text-emerald-800 p-4 rounded mb-6 font-bold flex items-center gap-2">✅ Sucesso! <a href="/" class="underline">Voltar</a></div>}
+        {success && <div class="bg-emerald-50 border border-emerald-200 text-emerald-800 p-4 rounded mb-6 font-bold flex items-center gap-2">✅ Sucesso! <a href="/" class="underline">Ir para o Dashboard</a></div>}
         {error && <div class="bg-red-50 border border-red-200 text-red-800 p-4 rounded mb-6 font-bold">{error}</div>}
 
         <form method="POST" class="bg-white border border-slate-200 rounded shadow-sm overflow-hidden">
@@ -85,15 +106,15 @@ const today = new Date().toISOString().split('T')[0];
                     </div>
                     <div class="md:col-span-2">
                         <label class="label-form">Nome do Cliente *</label>
-                        <input name="nome_cliente" required type="text" class="input-form">
+                        <input name="nome_cliente" required type="text" class="input-form font-bold text-slate-900">
                     </div>
                     <div class="md:col-span-1">
-                        <label class="label-form">Data *</label>
-                        <input name="data" type="date" value={today} class="input-form">
+                        <label class="label-form">Data Entrada *</label>
+                        <input name="data" type="date" value={today} required class="input-form">
                     </div>
 
                     <div class="md:col-span-2">
-                        <label class="label-form">Canal de Origem</label>
+                        <label class="label-form">Canal de Origem *</label>
                         <select name="origem" class="input-form font-bold text-slate-700" required>
                             <option value="">SELECIONE...</option>
                             <option value="INSTAGRAM">INSTAGRAM</option>
@@ -105,7 +126,7 @@ const today = new Date().toISOString().split('T')[0];
                             <option value="INDICAÇÃO">INDICAÇÃO</option>
                             <option value="RD STATION">RD STATION</option>
                             <option value="E-MAIL MKT">E-MAIL MKT</option>
-                                 <option value="MIDIA OFF">MIDIA OFF</option>
+                            <option value="MIDIA OFF">MIDIA OFF</option>
                         </select>
                     </div>
                     <div class="md:col-span-2">
@@ -177,6 +198,7 @@ const today = new Date().toISOString().split('T')[0];
                     <div>
                         <label class="label-form">Qualificado?</label>
                         <select name="qualificado" class="input-form">
+                            <option value="">Selecione...</option>
                             <option>NÃO</option>
                             <option>SIM</option>
                         </select>
@@ -189,8 +211,8 @@ const today = new Date().toISOString().split('T')[0];
                             <option value="Michele">Michele</option>
                             <option value="Angela">Angela</option>
                             <option value="Joelma">Joelma</option>
-                            <option value="Diretoria">Ana Julia</option>
-                            <option value="Diretoria">Leonardo</option>
+                            <option value="Ana Julia">Ana Julia</option>
+                            <option value="Leonardo">Leonardo</option>
                             <option value="Diretoria">Diretoria</option>
                         </select>
                     </div>
@@ -205,8 +227,8 @@ const today = new Date().toISOString().split('T')[0];
                         </select>
                     </div>
                     <div>
-                        <label class="label-form">Motivo (se Não)</label>
-                        <input name="motivo" type="text" class="input-form" placeholder="Preço, Frete...">
+                        <label class="label-form">Motivo (se Não/Perdido)</label>
+                        <input name="motivo" type="text" class="input-form" placeholder="Ex: Preço, Frete...">
                     </div>
                 </div>
             </div>
@@ -225,10 +247,10 @@ const today = new Date().toISOString().split('T')[0];
                         </label>
                     </div>
 
-                    <div class="md:col-span-9 grid grid-cols-2 gap-6 pl-0 md:pl-6 border-l border-slate-200">
+                    <div class="md:col-span-9 grid grid-cols-3 gap-6 pl-0 md:pl-6 border-l border-slate-200">
                         <div>
                             <label class="label-form text-slate-700">Venda Fechada?</label>
-                            <select name="venda" class="input-form font-medium">
+                            <select name="venda" id="select_venda" class="input-form font-medium" onchange="toggleDate()">
                                 <option value="">Em aberto</option>
                                 <option value="Sim">Sim (Venda Realizada)</option>
                                 <option value="Não">Não (Perdido)</option>
@@ -238,17 +260,37 @@ const today = new Date().toISOString().split('T')[0];
                             <label class="label-form text-slate-700">Valor do Pedido (R$)</label>
                             <input name="valor" type="text" class="input-form font-mono text-right font-bold text-slate-800" placeholder="0,00">
                         </div>
+                        <div id="div_data_venda" class="opacity-50 pointer-events-none">
+                            <label class="label-form text-emerald-700">Data do Fechamento</label>
+                            <input type="date" name="data_venda" id="input_data_venda" class="input-form border-emerald-300 bg-emerald-50">
+                        </div>
                     </div>
                 </div>
             </div>
 
             <div class="px-6 py-4 bg-white border-t border-slate-200 flex justify-end">
                 <button type="submit" class="bg-slate-900 text-white px-8 py-3 rounded font-bold text-sm hover:bg-slate-800 transition shadow-sm flex items-center gap-2">
-                    <span>💾</span> REGISTRAR LEAD
+                    <span>➕</span> REGISTRAR LEAD
                 </button>
             </div>
         </form>
     </div>
+
+    <script define:vars={{today}}>
+        function toggleDate() {
+            const select = document.getElementById('select_venda');
+            const div = document.getElementById('div_data_venda');
+            const input = document.getElementById('input_data_venda');
+
+            if (select.value === 'Sim') {
+                div.classList.remove('opacity-50', 'pointer-events-none');
+                // Auto-preenche com o dia de hoje se estiver vazio para facilitar a vida do vendedor
+                if (!input.value) input.value = today;
+            } else {
+                div.classList.add('opacity-50', 'pointer-events-none');
+            }
+        }
+    </script>
 
     <style>
         .label-form { @apply block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wide; }

@@ -7,6 +7,26 @@ const selectedMonth = urlMonth || getCurrentMonthSheetName();
 let rows = [];
 let errorMsg = null;
 
+// FUNÇÃO PARA PADRONIZAR A DATA VISUALMENTE (DD/MM/YYYY)
+const formatDateStr = (str) => {
+    if (!str) return '-';
+    const s = String(str).trim();
+    
+    // Se já tiver barras, garante que o ano tem 4 dígitos
+    if (s.includes('/')) {
+        const p = s.split('/');
+        if (p[2] && p[2].length === 2) p[2] = '20' + p[2];
+        return `${p[0].padStart(2, '0')}/${p[1].padStart(2, '0')}/${p[2]}`;
+    }
+    // Se vier do HTML/Sheets com traços (YYYY-MM-DD ou DD-MM-YYYY)
+    if (s.includes('-')) {
+        const p = s.split('-');
+        if (p[0].length === 4) return `${p[2]}/${p[1]}/${p[0]}`; // Era YYYY-MM-DD
+        return `${p[0]}/${p[1]}/${p[2].length === 2 ? '20' + p[2] : p[2]}`; // Era DD-MM-YYYY
+    }
+    return s;
+};
+
 try {
     const sheets = await getAuthSheets();
     const realName = await findRealSheetName(sheets, selectedMonth);
@@ -26,7 +46,7 @@ try {
             index: i, 
             realSheetName: realName,
             nome: r[0] || 'Sem Nome',
-            dataDate: r[1] || '',
+            dataDate: formatDateStr(r[1]), // A data já vai limpa para o HTML
             telefone: r[4] || 'Sem Telefone', 
             produto: r[6] || '-',
             vendedor: r[10] || '-',
@@ -89,10 +109,8 @@ try {
                         data-venda={row.isVenda}
                         data-search={String(`${row.nome} ${row.telefone} ${row.produto} ${row.vendedor} ${row.statusGuru}`).toLowerCase()}
                     >
-                        {/* Garante que a data é sempre exibida corretamente, venha ela com hifens ou barras */}
-                        <td class="px-6 py-3 text-slate-500 whitespace-nowrap text-xs font-mono">
-                            {row.dataDate.includes('-') ? row.dataDate.split('-').reverse().join('/') : row.dataDate || '-'}
-                        </td>
+                        {/* A data agora é exibida de forma simples e limpa */}
+                        <td class="px-6 py-3 text-slate-500 whitespace-nowrap text-xs font-mono">{row.dataDate}</td>
                         <td class="px-6 py-3 font-bold text-slate-800 whitespace-nowrap">{row.nome}</td>
                         <td class="px-6 py-3 text-slate-600 text-xs whitespace-nowrap font-mono">{row.telefone}</td>
                         <td class="px-6 py-3 text-slate-600 text-xs whitespace-nowrap truncate max-w-[150px]">{row.produto}</td>
@@ -173,11 +191,11 @@ try {
                     if (criteria === 'az') return nomeA.localeCompare(nomeB);
                     
                     if (criteria === 'recente') {
-                        // Converte DD/MM/YYYY para YYYYMMDD para o computador conseguir ordenar corretamente
+                        // Como a data agora está sempre em DD/MM/YYYY, o conversor fica super simples e seguro
                         const parseSortDate = (d) => {
-                            if (!d) return '00000000';
-                            if (d.includes('-')) return d.replace(/-/g, '');
-                            if (d.includes('/')) return d.split('/').reverse().join('');
+                            if (!d || d === '-') return '00000000';
+                            const parts = d.split('/');
+                            if (parts.length === 3) return parts[2] + parts[1] + parts[0]; // Retorna YYYYMMDD
                             return d;
                         };
                         return parseSortDate(dateB).localeCompare(parseSortDate(dateA));

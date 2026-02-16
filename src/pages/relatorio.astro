@@ -7,47 +7,33 @@ const selectedMonth = urlMonth || getCurrentMonthSheetName();
 let rows = [];
 let kpi = { faturamento: 0, vendas: 0, leads: 0, ticketMedio: 0, conversao: 0 };
 
-// FUNÇÃO AUXILIAR 1: TRADUZIR QUALQUER FORMATO DE DATA (BR ou Americano)
 function parseDataBR(dataStr) {
     if (!dataStr) return null;
     const str = String(dataStr).trim();
+    if (!str) return null;
     
-    // Se vier no padrão do input HTML com traços (ex: 2026-02-16 ou 16-02-2026)
-    if (str.includes('-')) {
-        const parts = str.split('-');
-        if (parts[0].length === 4) { // Formato: 2026-02-16
-            return new Date(`${parts[0]}-${parts[1]}-${parts[2]}T12:00:00`);
-        } else if (parts[2].length === 4) { // Formato: 16-02-2026
-            return new Date(`${parts[2]}-${parts[1]}-${parts[0]}T12:00:00`);
-        }
-    }
-    
-    // Se vier do Sheets com barras (ex: 16/02/2026 ou 16/02/26)
+    let dia, mes, ano;
     if (str.includes('/')) {
         const parts = str.split('/');
-        let ano = parts[2];
-        if (ano.length === 2) ano = '20' + ano; 
-        return new Date(`${ano}-${parts[1]}-${parts[0]}T12:00:00`); 
-    }
+        dia = parseInt(parts[0], 10); mes = parseInt(parts[1], 10); ano = parseInt(parts[2], 10);
+        if (ano < 100) ano += 2000;
+    } else if (str.includes('-')) {
+        const parts = str.split('-');
+        if (parts[0].length === 4) { ano = parseInt(parts[0], 10); mes = parseInt(parts[1], 10); dia = parseInt(parts[2], 10); } 
+        else { dia = parseInt(parts[0], 10); mes = parseInt(parts[1], 10); ano = parseInt(parts[2], 10); }
+    } else { return null; }
     
-    // Fallback nativo
-    return new Date(str); 
+    const d = new Date(ano, mes - 1, dia);
+    return isNaN(d.getTime()) ? null : d;
 }
 
-// FUNÇÃO AUXILIAR 2: CALCULAR DIAS CORRIDOS (Protegida contra erros)
 function calcCiclo(dataEntrada, dataVenda) {
-    if (!dataEntrada || !dataVenda) return null;
-    
     const d1 = parseDataBR(dataEntrada);
     const d2 = parseDataBR(dataVenda);
-    
-    // Se a data for inválida, aborta o cálculo em vez de quebrar
-    if (!d1 || !d2 || isNaN(d1) || isNaN(d2)) return null;
-    
-    // Diferença em milissegundos convertida para dias
-    const diffTime = Math.abs(d2 - d1);
+    if (!d1 || !d2) return null;
+    const diffTime = d2.getTime() - d1.getTime();
     const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24)); 
-    return diffDays;
+    return diffDays >= 0 ? diffDays : 0;
 }
 
 try {
@@ -55,7 +41,6 @@ try {
     const realName = await findRealSheetName(sheets, selectedMonth);
     if (!realName) throw new Error("Aba não encontrada");
 
-    // LÊ ATÉ A COLUNA "P" para apanhar a Data da Venda (Índice 15)
     const response = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
         range: `'${realName}'!A2:P1000`, 
@@ -67,43 +52,44 @@ try {
         const valorLimpo = r[14] ? parseFloat(r[14].replace('R$', '').replace(/\./g, '').replace(',', '.').trim()) : 0;
         const isVenda = r[13]?.toLowerCase().trim() === 'sim';
         
-        // Acumula KPIs
         kpi.leads++;
         if (isVenda) {
             kpi.faturamento += valorLimpo;
             kpi.vendas++;
         }
 
-        // Calcula o Ciclo de Venda
-        const dataEntrada = r[1] || ''; // Coluna B
-        const dataVenda = r[15] || '';  // Coluna P (Aqui chega a data de fechamento)
+        const dataEntrada = r[1] || ''; 
+        const dataVenda = r[15] || '';  
         const ciclo = isVenda ? calcCiclo(dataEntrada, dataVenda) : null;
+
+        // Classificação do Tráfego
+        const origemLow = (r[3] || '').toLowerCase();
+        const isPago = origemLow.includes('ads') || origemLow.includes('instagram') || origemLow.includes('face') || origemLow.includes('google') || origemLow.includes('patrocinado') || origemLow.includes('rd');
+        const trafego = isPago ? 'pago' : 'organico';
 
         return {
             raw: r, 
             index: i,
-            cliente: r[0] || '-',       // A
-            data: dataEntrada,          // B
-            telefone: r[4] || '-',      // E 
-            origem: r[3] || '-',        // D
-            segmento: r[5] || '-',      // F
-            produto: r[6] || '-',       // G
-            vendedor: r[10] || '-',     // K
-            statusGuru: r[11] || '-',   // L
-            venda: isVenda,             // N
-            valor: valorLimpo,          // O
-            ciclo: ciclo,               // Novo campo calculado corretamente
+            cliente: r[0] || '-',       
+            data: dataEntrada,          
+            telefone: r[4] || '-',      
+            origem: r[3] || '-',        
+            segmento: r[5] || '-',      
+            produto: r[6] || '-',       
+            vendedor: r[10] || '-',     
+            statusGuru: r[11] || '-',   
+            venda: isVenda,             
+            valor: valorLimpo,          
+            ciclo: ciclo,
+            trafego: trafego,           
             valorFmt: new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valorLimpo)
         };
     }).reverse();
 
-    // Calcula Derivados
     kpi.ticketMedio = kpi.vendas > 0 ? kpi.faturamento / kpi.vendas : 0;
     kpi.conversao = kpi.leads > 0 ? (kpi.vendas / kpi.leads) * 100 : 0;
 
-} catch (e) {
-    console.error(e);
-}
+} catch (e) { console.error(e); }
 ---
 
 <Layout title="Relatórios Analíticos">
@@ -145,11 +131,18 @@ try {
     </div>
 
     <div class="bg-white p-4 rounded shadow-sm border border-slate-200 mb-6 flex flex-col lg:flex-row gap-4 items-center justify-between">
-        <div class="flex flex-col md:flex-row gap-4 w-full lg:w-auto flex-1">
+        <div class="flex flex-col md:flex-row gap-4 w-full lg:w-auto flex-1 items-center">
             <div class="relative flex-1 w-full">
                 <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">🔍</span>
-                <input type="text" id="searchInput" placeholder="Filtrar por Cliente, Telefone, Vendedor, Origem ou Produto..." class="w-full pl-10 pr-4 py-2 border border-slate-300 rounded outline-none text-sm focus:border-slate-500 transition">
+                <input type="text" id="searchInput" placeholder="Filtrar Cliente, Produto..." class="w-full pl-10 pr-4 py-2 border border-slate-300 rounded outline-none text-sm focus:border-slate-500 transition">
             </div>
+            
+            <select id="filterTrafego" class="border border-slate-300 rounded px-3 py-2 text-sm bg-slate-50 cursor-pointer outline-none w-full md:w-auto focus:border-slate-500">
+                <option value="todos">🌍 Todo Tráfego</option>
+                <option value="pago">🚀 Pagos</option>
+                <option value="organico">🌱 Orgânicos</option>
+            </select>
+
             <select id="sortSelect" class="border border-slate-300 rounded px-3 py-2 text-sm bg-slate-50 cursor-pointer outline-none w-full md:w-auto focus:border-slate-500">
                 <option value="recente">📅 Recentes</option>
                 <option value="antiga">📅 Antigos</option>
@@ -185,9 +178,9 @@ try {
                         data-nome={String(row.cliente).toLowerCase()} 
                         data-date={row.data} 
                         data-valor={row.valor} 
+                        data-trafego={row.trafego}
                         data-venda={row.venda ? '1' : '0'}>
                         
-                        {/* Exibição Correta do Ciclo de Venda */}
                         <td class="px-4 py-2.5 text-center whitespace-nowrap">
                             {row.ciclo !== null ? (
                                 <span class={`px-2 py-0.5 rounded text-[10px] font-bold border whitespace-nowrap
@@ -201,7 +194,6 @@ try {
                             )}
                         </td>
 
-                        {/* Exibição da Data (formatando YYYY-MM-DD para DD/MM/YYYY se necessário) */}
                         <td class="px-4 py-2.5 text-slate-500 whitespace-nowrap font-mono">
                             {row.data.includes('-') ? row.data.split('-').reverse().join('/') : row.data}
                         </td>
@@ -234,6 +226,7 @@ try {
     <script define:vars={{ selectedMonth }}>
         const searchInput = document.getElementById('searchInput');
         const sortSelect = document.getElementById('sortSelect');
+        const filterTrafego = document.getElementById('filterTrafego');
         const tableBody = document.querySelector('#reportTable tbody');
         let rows = Array.from(document.querySelectorAll('.data-row'));
 
@@ -245,14 +238,17 @@ try {
         function filterAndSort() {
             const term = removeAccents(searchInput.value).toLowerCase().trim();
             const criteria = sortSelect.value;
+            const trafego = filterTrafego.value;
             
             rows.forEach(row => {
                 const rawSearch = row.getAttribute('data-search') || "";
                 const text = removeAccents(rawSearch).toLowerCase();
+                const rowTrafego = row.getAttribute('data-trafego');
                 const isVenda = row.getAttribute('data-venda') === '1';
                 
                 let matches = text.includes(term);
                 if (criteria === 'vendas' && !isVenda) matches = false;
+                if (trafego !== 'todos' && rowTrafego !== trafego) matches = false;
                 
                 row.style.display = matches ? '' : 'none';
             });
@@ -284,6 +280,7 @@ try {
 
         searchInput.addEventListener('input', filterAndSort);
         sortSelect.addEventListener('change', filterAndSort);
+        filterTrafego.addEventListener('change', filterAndSort);
 
         document.getElementById('btnExcel').addEventListener('click', () => {
             const wb = XLSX.utils.table_to_book(document.getElementById('reportTable'), { sheet: "Relatorio" });
