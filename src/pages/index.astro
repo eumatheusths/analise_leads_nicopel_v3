@@ -25,17 +25,42 @@ let cac = 0;
 
 const viewTitles = { 'geral': 'Visão Geral', 'pago': 'Tráfego Pago', 'organico': 'Orgânico' };
 
-// FUNÇÃO AUXILIAR: CALCULAR DIAS DE CORRIDOS
+// --- FUNÇÕES AUXILIARES DE DATA (ATUALIZADAS) ---
+function parseDataBR(dataStr) {
+    if (!dataStr) return null;
+    const str = String(dataStr).trim();
+    
+    // Se vier no padrão YYYY-MM-DD
+    if (str.includes('-')) {
+        const parts = str.split('-');
+        if (parts[0].length === 4) { // 2026-02-16
+            return new Date(`${parts[0]}-${parts[1]}-${parts[2]}T12:00:00`);
+        } else if (parts[2].length === 4) { // 16-02-2026
+            return new Date(`${parts[2]}-${parts[1]}-${parts[0]}T12:00:00`);
+        }
+    }
+    
+    // Se vier com barras (DD/MM/YYYY)
+    if (str.includes('/')) {
+        const parts = str.split('/');
+        let ano = parts[2];
+        if (ano.length === 2) ano = '20' + ano; 
+        return new Date(`${ano}-${parts[1]}-${parts[0]}T12:00:00`); 
+    }
+    
+    return new Date(str); 
+}
+
 function calcCiclo(dataEntrada, dataVenda) {
     if (!dataEntrada || !dataVenda) return null;
-    const d1 = new Date(dataEntrada);
-    const d2 = new Date(dataVenda);
-    if (isNaN(d1) || isNaN(d2)) return null;
     
-    // Diferença em milissegundos
+    const d1 = parseDataBR(dataEntrada);
+    const d2 = parseDataBR(dataVenda);
+    
+    if (!d1 || !d2 || isNaN(d1) || isNaN(d2)) return null;
+    
     const diffTime = Math.abs(d2 - d1);
-    // Converte para dias (1000ms * 60s * 60m * 24h)
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+    const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24)); 
     return diffDays;
 }
 
@@ -56,7 +81,7 @@ try {
     const foundName = await findRealSheetName(sheets, selectedMonth);
     if (foundName) realSheetName = foundName;
 
-    // 2. LÊ ATÉ A COLUNA "P" (Índice 15) AGORA
+    // 2. LÊ ATÉ A COLUNA "P" (Índice 15)
     const monthResponse = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
         range: `'${realSheetName}'!A2:P1000`, 
@@ -121,7 +146,7 @@ try {
                 vendedor, 
                 status: vendaStatus, 
                 valor: valorFloat,
-                ciclo: diasCiclo // Novo campo
+                ciclo: diasCiclo 
             });
         } else {
             if (motivoRaw.trim().length > 1) {

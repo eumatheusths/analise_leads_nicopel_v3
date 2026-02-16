@@ -7,15 +7,58 @@ const selectedMonth = urlMonth || getCurrentMonthSheetName();
 let rows = [];
 let kpi = { faturamento: 0, vendas: 0, leads: 0, ticketMedio: 0, conversao: 0 };
 
+// FUNÇÃO AUXILIAR 1: TRADUZIR QUALQUER FORMATO DE DATA (BR ou Americano)
+function parseDataBR(dataStr) {
+    if (!dataStr) return null;
+    const str = String(dataStr).trim();
+    
+    // Se vier no padrão do input HTML com traços (ex: 2026-02-16 ou 16-02-2026)
+    if (str.includes('-')) {
+        const parts = str.split('-');
+        if (parts[0].length === 4) { // Formato: 2026-02-16
+            return new Date(`${parts[0]}-${parts[1]}-${parts[2]}T12:00:00`);
+        } else if (parts[2].length === 4) { // Formato: 16-02-2026
+            return new Date(`${parts[2]}-${parts[1]}-${parts[0]}T12:00:00`);
+        }
+    }
+    
+    // Se vier do Sheets com barras (ex: 16/02/2026 ou 16/02/26)
+    if (str.includes('/')) {
+        const parts = str.split('/');
+        let ano = parts[2];
+        if (ano.length === 2) ano = '20' + ano; 
+        return new Date(`${ano}-${parts[1]}-${parts[0]}T12:00:00`); 
+    }
+    
+    // Fallback nativo
+    return new Date(str); 
+}
+
+// FUNÇÃO AUXILIAR 2: CALCULAR DIAS CORRIDOS (Protegida contra erros)
+function calcCiclo(dataEntrada, dataVenda) {
+    if (!dataEntrada || !dataVenda) return null;
+    
+    const d1 = parseDataBR(dataEntrada);
+    const d2 = parseDataBR(dataVenda);
+    
+    // Se a data for inválida, aborta o cálculo em vez de quebrar
+    if (!d1 || !d2 || isNaN(d1) || isNaN(d2)) return null;
+    
+    // Diferença em milissegundos convertida para dias
+    const diffTime = Math.abs(d2 - d1);
+    const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24)); 
+    return diffDays;
+}
+
 try {
     const sheets = await getAuthSheets();
     const realName = await findRealSheetName(sheets, selectedMonth);
     if (!realName) throw new Error("Aba não encontrada");
 
-    // LÊ ATÉ A COLUNA "O"
+    // LÊ ATÉ A COLUNA "P" para apanhar a Data da Venda (Índice 15)
     const response = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
-        range: `'${realName}'!A2:O1000`, 
+        range: `'${realName}'!A2:P1000`, 
     });
     
     const rawData = response.data.values || [];
@@ -31,11 +74,17 @@ try {
             kpi.vendas++;
         }
 
+        // Calcula o Ciclo de Venda
+        const dataEntrada = r[1] || ''; // Coluna B
+        const dataVenda = r[15] || '';  // Coluna P (Aqui chega a data de fechamento)
+        const ciclo = isVenda ? calcCiclo(dataEntrada, dataVenda) : null;
+
         return {
             raw: r, 
             index: i,
             cliente: r[0] || '-',       // A
-            data: r[1] || '',           // B
+            data: dataEntrada,          // B
+            telefone: r[4] || '-',      // E 
             origem: r[3] || '-',        // D
             segmento: r[5] || '-',      // F
             produto: r[6] || '-',       // G
@@ -43,6 +92,7 @@ try {
             statusGuru: r[11] || '-',   // L
             venda: isVenda,             // N
             valor: valorLimpo,          // O
+            ciclo: ciclo,               // Novo campo calculado corretamente
             valorFmt: new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valorLimpo)
         };
     }).reverse();
@@ -98,7 +148,7 @@ try {
         <div class="flex flex-col md:flex-row gap-4 w-full lg:w-auto flex-1">
             <div class="relative flex-1 w-full">
                 <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">🔍</span>
-                <input type="text" id="searchInput" placeholder="Filtrar por Cliente, Vendedor ou Produto..." class="w-full pl-10 pr-4 py-2 border border-slate-300 rounded outline-none text-sm focus:border-slate-500 transition">
+                <input type="text" id="searchInput" placeholder="Filtrar por Cliente, Telefone, Vendedor, Origem ou Produto..." class="w-full pl-10 pr-4 py-2 border border-slate-300 rounded outline-none text-sm focus:border-slate-500 transition">
             </div>
             <select id="sortSelect" class="border border-slate-300 rounded px-3 py-2 text-sm bg-slate-50 cursor-pointer outline-none w-full md:w-auto focus:border-slate-500">
                 <option value="recente">📅 Recentes</option>
@@ -118,22 +168,44 @@ try {
         <table class="min-w-full text-xs text-left" id="reportTable">
             <thead class="bg-slate-800 text-slate-300 font-semibold uppercase">
                 <tr>
+                    <th class="px-4 py-3 whitespace-nowrap text-center">Ciclo</th>
                     <th class="px-4 py-3 whitespace-nowrap">Data</th>
                     <th class="px-4 py-3 whitespace-nowrap">Cliente</th>
                     <th class="px-4 py-3 whitespace-nowrap">Produto</th>
                     <th class="px-4 py-3 whitespace-nowrap">Origem</th>
                     <th class="px-4 py-3 whitespace-nowrap">Vendedor</th>
-                    <th class="px-4 py-3 whitespace-nowrap text-center">Status Guru</th>
+                    <th class="px-4 py-3 whitespace-nowrap text-center">Status Chat</th>
                     <th class="px-4 py-3 text-right whitespace-nowrap">Valor</th>
                 </tr>
             </thead>
             <tbody class="divide-y divide-slate-100 bg-white">
                 {rows.map((row) => (
                     <tr class="data-row hover:bg-slate-50 transition"
-                        data-search={`${row.cliente} ${row.vendedor} ${row.segmento} ${row.produto}`.toLowerCase()}
-                        data-nome={row.cliente.toLowerCase()} data-date={row.data} data-valor={row.valor} data-venda={row.venda ? '1' : '0'}>
+                        data-search={String(`${row.cliente} ${row.telefone} ${row.vendedor} ${row.segmento} ${row.produto} ${row.origem} ${row.statusGuru}`).toLowerCase()}
+                        data-nome={String(row.cliente).toLowerCase()} 
+                        data-date={row.data} 
+                        data-valor={row.valor} 
+                        data-venda={row.venda ? '1' : '0'}>
                         
-                        <td class="px-4 py-2.5 text-slate-500 whitespace-nowrap font-mono">{row.data.split('-').reverse().join('/')}</td>
+                        {/* Exibição Correta do Ciclo de Venda */}
+                        <td class="px-4 py-2.5 text-center whitespace-nowrap">
+                            {row.ciclo !== null ? (
+                                <span class={`px-2 py-0.5 rounded text-[10px] font-bold border whitespace-nowrap
+                                    ${row.ciclo <= 7 ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 
+                                      row.ciclo <= 30 ? 'bg-yellow-50 text-yellow-700 border-yellow-100' : 
+                                      'bg-red-50 text-red-700 border-red-100'}`}>
+                                    {row.ciclo === 0 ? 'No dia' : row.ciclo + ' dias'}
+                                </span>
+                            ) : (
+                                <span class="text-slate-300">-</span>
+                            )}
+                        </td>
+
+                        {/* Exibição da Data (formatando YYYY-MM-DD para DD/MM/YYYY se necessário) */}
+                        <td class="px-4 py-2.5 text-slate-500 whitespace-nowrap font-mono">
+                            {row.data.includes('-') ? row.data.split('-').reverse().join('/') : row.data}
+                        </td>
+                        
                         <td class="px-4 py-2.5 font-bold text-slate-800 whitespace-nowrap">{row.cliente}</td>
                         <td class="px-4 py-2.5 text-slate-600 whitespace-nowrap truncate max-w-[150px]" title={row.produto}>{row.produto}</td>
                         <td class="px-4 py-2.5 text-slate-500 whitespace-nowrap">{row.origem}</td>
@@ -141,9 +213,9 @@ try {
                         
                         <td class="px-4 py-2.5 text-center whitespace-nowrap">
                             <span class={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase
-                                ${row.statusGuru.includes('VENDA') || row.statusGuru.includes('GANHO') ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 
-                                  row.statusGuru.includes('PERDIDO') ? 'bg-red-50 text-red-700 border-red-100' :
-                                  row.statusGuru.includes('NEGOCIA') ? 'bg-yellow-50 text-yellow-700 border-yellow-100' : 
+                                ${String(row.statusGuru).includes('VENDA') || String(row.statusGuru).includes('GANHO') ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 
+                                  String(row.statusGuru).includes('PERDIDO') ? 'bg-red-50 text-red-700 border-red-100' :
+                                  String(row.statusGuru).includes('NEGOCIA') ? 'bg-yellow-50 text-yellow-700 border-yellow-100' : 
                                   'bg-slate-100 text-slate-500 border-slate-200'}`}>
                                 {row.statusGuru}
                             </span>
@@ -154,7 +226,7 @@ try {
                         </td>
                     </tr>
                 ))}
-                {rows.length === 0 && (<tr><td colspan="7" class="px-6 py-12 text-center text-slate-400">Nenhum registro encontrado para este mês.</td></tr>)}
+                {rows.length === 0 && (<tr><td colspan="8" class="px-6 py-12 text-center text-slate-400">Nenhum registro encontrado para este mês.</td></tr>)}
             </tbody>
         </table>
     </div>
@@ -165,25 +237,48 @@ try {
         const tableBody = document.querySelector('#reportTable tbody');
         let rows = Array.from(document.querySelectorAll('.data-row'));
 
+        const removeAccents = (str) => {
+            if (!str) return "";
+            return String(str).normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        };
+
         function filterAndSort() {
-            const term = searchInput.value.toLowerCase();
+            const term = removeAccents(searchInput.value).toLowerCase().trim();
             const criteria = sortSelect.value;
+            
             rows.forEach(row => {
-                const text = row.getAttribute('data-search');
+                const rawSearch = row.getAttribute('data-search') || "";
+                const text = removeAccents(rawSearch).toLowerCase();
                 const isVenda = row.getAttribute('data-venda') === '1';
+                
                 let matches = text.includes(term);
                 if (criteria === 'vendas' && !isVenda) matches = false;
+                
                 row.style.display = matches ? '' : 'none';
             });
+            
             const visibleRows = rows.filter(r => r.style.display !== 'none');
+            
             visibleRows.sort((a, b) => {
-                const dateA = a.getAttribute('data-date') || '', dateB = b.getAttribute('data-date') || '';
-                const valA = parseFloat(a.getAttribute('data-valor')), valB = parseFloat(b.getAttribute('data-valor'));
-                if (criteria === 'recente') return dateB.localeCompare(dateA);
-                if (criteria === 'antiga') return dateA.localeCompare(dateB);
+                const dateA = a.getAttribute('data-date') || '';
+                const dateB = b.getAttribute('data-date') || '';
+                const valA = parseFloat(a.getAttribute('data-valor') || '0');
+                const valB = parseFloat(b.getAttribute('data-valor') || '0');
+                
+                if (criteria === 'recente') {
+                    const d1 = dateA.includes('-') ? dateA.replace(/-/g, '') : dateA.split('/').reverse().join('');
+                    const d2 = dateB.includes('-') ? dateB.replace(/-/g, '') : dateB.split('/').reverse().join('');
+                    return d2.localeCompare(d1);
+                }
+                if (criteria === 'antiga') {
+                    const d1 = dateA.includes('-') ? dateA.replace(/-/g, '') : dateA.split('/').reverse().join('');
+                    const d2 = dateB.includes('-') ? dateB.replace(/-/g, '') : dateB.split('/').reverse().join('');
+                    return d1.localeCompare(d2);
+                }
                 if (criteria === 'maior_valor') return valB - valA;
                 return 0;
             });
+            
             visibleRows.forEach(row => tableBody.appendChild(row));
         }
 

@@ -9,12 +9,11 @@ let data = [];
 let success = false;
 let error = null;
 
-// Carregar Dados (Lê até a coluna P agora)
+// Carregar Dados (Lê até a coluna P)
 if (sheetName && index !== null) {
     try {
         const sheets = await getAuthSheets();
         const realRow = parseInt(index) + 2; 
-        // Ajuste no range para ler até a coluna P
         const res = await sheets.spreadsheets.values.get({
             spreadsheetId: SPREADSHEET_ID, 
             range: `'${sheetName}'!A${realRow}:P${realRow}`
@@ -38,30 +37,31 @@ if (Astro.request.method === "POST") {
             origemFinal = `${origemFinal} ADS`;
         }
 
+        // Blindagem total contra campos vazios (impede que as colunas se desorganizem)
         const updated = [
-            fd.get('nome'),           // A
-            fd.get('data'),           // B
+            fd.get('nome') || '',           // A
+            fd.get('data') || '',           // B
             fd.get('rd_check') ? "TRUE" : "FALSE", // C
-            origemFinal,              // D
-            fd.get('numero'),         // E
-            fd.get('seguimento'),     // F
-            fd.get('produto'),        // G
-            fd.get('quantidade'),     // H
-            fd.get('qualificado'),    // I
-            fd.get('motivo'),         // J
-            fd.get('delegado'),       // K
-            fd.get('status_guru'),    // L
+            origemFinal || '',              // D
+            fd.get('numero') || '',         // E
+            fd.get('seguimento') || '',     // F
+            fd.get('produto') || '',        // G
+            fd.get('quantidade') || '',     // H
+            fd.get('qualificado') || '',    // I
+            fd.get('motivo') || '',         // J
+            fd.get('delegado') || '',       // K
+            fd.get('status_guru') || '',    // L
             fd.get('pipefy_check') ? "TRUE" : "FALSE", // M
-            fd.get('venda'),          // N
-            fd.get('valor'),          // O
-            fd.get('data_venda')      // P (Novo Campo: Data da Venda)
+            fd.get('venda') || '',          // N
+            fd.get('valor') || '',          // O
+            fd.get('data_venda') || ''      // P (Data da Venda mapeada perfeitamente)
         ];
         
         const targetSheet = fd.get('target_sheet');
         const sheets = await getAuthSheets();
         const rowIndex = parseInt(index) + 2;
         
-        // Ajuste no range para gravar até a coluna P
+        // Grava até a coluna P
         await sheets.spreadsheets.values.update({
             spreadsheetId: SPREADSHEET_ID,
             range: `'${targetSheet}'!A${rowIndex}:P${rowIndex}`,
@@ -82,11 +82,25 @@ const isChecked = (i) => {
     return val === 'TRUE' || val === 'VERDADEIRO' || val === 'SIM';
 };
 
+// --- FUNÇÃO PARA CORRIGIR O BUG DO INPUT TYPE="DATE" ---
+// O HTML só aceita "YYYY-MM-DD". Esta função converte o padrão Brasileiro do Sheets para o HTML.
+const formatForDateInput = (dateStr) => {
+    if (!dateStr) return '';
+    const str = String(dateStr).trim();
+    if (str.includes('/')) {
+        const parts = str.split('/');
+        let ano = parts[2];
+        if (ano.length === 2) ano = '20' + ano; // transforma 26 em 2026
+        return `${ano}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+    }
+    return str;
+};
+
 // Lógica para detectar se já é ADS no formulário de edição
 const rawOrigem = v(3);
 const isAds = rawOrigem.includes('ADS') || rawOrigem.includes('LP');
 const cleanOrigem = rawOrigem.replace(' ADS', '').trim();
-const today = new Date().toISOString().split('T')[0]; // Data de hoje para preenchimento automático
+const today = new Date().toISOString().split('T')[0];
 ---
 
 <Layout title="Editar Lead">
@@ -113,13 +127,14 @@ const today = new Date().toISOString().split('T')[0]; // Data de hoje para preen
                     </div>
                     <div class="md:col-span-1">
                         <label class="label-form">Data Entrada *</label>
-                        <input type="date" name="data" value={v(1)} class="input-form">
+                        {/* Uso da formatação correta de data para o input HTML */}
+                        <input type="date" name="data" value={formatForDateInput(v(1))} class="input-form">
                     </div>
 
                     <div class="md:col-span-2">
                         <label class="label-form">Canal de Origem</label>
                         <select name="origem" class="input-form font-bold text-slate-700">
-                            {['INSTAGRAM','FORMS INSTAGRAM','SITE','WHATSAPP','LP META','LP GOOGLE','INDICAÇÃO','RD STATION','E-MAIL MKT','ORGÂNICO','OUTROS'].map(opt => (
+                            {['INSTAGRAM','FORMS INSTAGRAM','SITE','WHATSAPP','LP META','LP GOOGLE','INDICAÇÃO',' MIDIA OFF','RD STATION','E-MAIL MKT','ORGÂNICO','OUTROS'].map(opt => (
                                 <option selected={cleanOrigem === opt} value={opt}>{opt}</option>
                             ))}
                         </select>
@@ -156,6 +171,7 @@ const today = new Date().toISOString().split('T')[0]; // Data de hoje para preen
                             <option value="Pizza"></option>
                             <option value="Cx Sorvete"></option>
                             <option value="Projeto Especial"></option>
+                            <option value="Outros/ Não produzimos"></option>
                         </datalist>
                     </div>
                     
@@ -189,21 +205,21 @@ const today = new Date().toISOString().split('T')[0]; // Data de hoje para preen
                     <div>
                         <label class="label-form">Qualificado?</label>
                         <select name="qualificado" class="input-form">
-                            <option selected={v(8) === 'SIM'}>SIM</option>
                             <option selected={v(8) === 'NÃO'}>NÃO</option>
+                            <option selected={v(8) === 'SIM'}>SIM</option>
                         </select>
                     </div>
                     <div>
                         <label class="label-form">Delegado Para</label>
                         <select name="delegado" class="input-form">
                             <option value="">-- Selecione --</option>
-                            {['Clodoaldo','Michele','Angela','Joelma','Diretoria'].map(opt => (
+                            {['Clodoaldo','Michele','Angela','Joelma','Diretoria', 'Leonardo','Ana Julia'].map(opt => (
                                 <option selected={v(10) === opt} value={opt}>{opt}</option>
                             ))}
                         </select>
                     </div>
                     <div>
-                        <label class="label-form">Status no Guru</label>
+                        <label class="label-form">Status no Chat </label>
                         <select name="status_guru" class="input-form">
                             {['PRIMEIRO CONTATO','EM NEGOCIAÇÃO','AGUARDANDO RETORNO','PERDIDO','VENDA FECHADA'].map(opt => (
                                 <option selected={v(11) === opt} value={opt}>{opt}</option>
@@ -246,7 +262,8 @@ const today = new Date().toISOString().split('T')[0]; // Data de hoje para preen
                         </div>
                         <div id="div_data_venda" class={v(13) === 'Sim' ? '' : 'opacity-50 pointer-events-none'}>
                             <label class="label-form text-emerald-700">Data do Fechamento</label>
-                            <input type="date" name="data_venda" id="input_data_venda" value={v(15)} class="input-form border-emerald-300 bg-emerald-50">
+                            {/* Uso da formatação correta de data para exibir a data da venda corretamente */}
+                            <input type="date" name="data_venda" id="input_data_venda" value={formatForDateInput(v(15))} class="input-form border-emerald-300 bg-emerald-50">
                         </div>
                     </div>
                 </div>
@@ -272,9 +289,6 @@ const today = new Date().toISOString().split('T')[0]; // Data de hoje para preen
                 if (!input.value) input.value = today;
             } else {
                 div.classList.add('opacity-50', 'pointer-events-none');
-                // Opcional: Limpar se mudar para "Não" ou "Em aberto". 
-                // Comentei para evitar apagar dados acidentalmente se o usuário só clicar errado.
-                // input.value = ''; 
             }
         }
         // Roda ao carregar para definir o estado inicial correto
