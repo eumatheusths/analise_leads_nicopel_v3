@@ -7,22 +7,18 @@ const selectedMonth = urlMonth || getCurrentMonthSheetName();
 let rows = [];
 let errorMsg = null;
 
-// FUNÇÃO PARA PADRONIZAR A DATA VISUALMENTE (DD/MM/YYYY)
 const formatDateStr = (str) => {
     if (!str) return '-';
     const s = String(str).trim();
-    
-    // Se já tiver barras, garante que o ano tem 4 dígitos
     if (s.includes('/')) {
         const p = s.split('/');
         if (p[2] && p[2].length === 2) p[2] = '20' + p[2];
         return `${p[0].padStart(2, '0')}/${p[1].padStart(2, '0')}/${p[2]}`;
     }
-    // Se vier do HTML/Sheets com traços (YYYY-MM-DD ou DD-MM-YYYY)
     if (s.includes('-')) {
         const p = s.split('-');
-        if (p[0].length === 4) return `${p[2]}/${p[1]}/${p[0]}`; // Era YYYY-MM-DD
-        return `${p[0]}/${p[1]}/${p[2].length === 2 ? '20' + p[2] : p[2]}`; // Era DD-MM-YYYY
+        if (p[0].length === 4) return `${p[2]}/${p[1]}/${p[0]}`; 
+        return `${p[0]}/${p[1]}/${p[2].length === 2 ? '20' + p[2] : p[2]}`; 
     }
     return s;
 };
@@ -32,7 +28,6 @@ try {
     const realName = await findRealSheetName(sheets, selectedMonth);
     if (!realName) throw new Error("Aba não encontrada");
 
-    // Mantemos a consistência lendo até a coluna P
     const response = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
         range: `'${realName}'!A2:P1000`, 
@@ -40,18 +35,25 @@ try {
     
     rows = (response.data.values || []).map((r, i) => {
         const venda = r[13]?.toLowerCase().trim() === 'sim' ? 1 : 0;
+        const origemLow = (r[3] || '').toLowerCase();
+        
+        // Lógica de Classificação de Tráfego
+        const isPago = origemLow.includes('ads') || origemLow.includes('instagram') || origemLow.includes('face') || origemLow.includes('google') || origemLow.includes('patrocinado') || origemLow.includes('rd');
+        const trafego = isPago ? 'pago' : 'organico';
         
         return { 
             data: r, 
             index: i, 
             realSheetName: realName,
             nome: r[0] || 'Sem Nome',
-            dataDate: formatDateStr(r[1]), // A data já vai limpa para o HTML
+            dataDate: formatDateStr(r[1]), 
             telefone: r[4] || 'Sem Telefone', 
+            segmento: r[5] || '-', // NOVO CAMPO: Adicionado o Segmento
             produto: r[6] || '-',
             vendedor: r[10] || '-',
             statusGuru: r[11] || '-',
-            isVenda: venda
+            isVenda: venda,
+            trafego: trafego 
         };
     }).reverse();
 } catch (e) {
@@ -76,12 +78,20 @@ try {
 
     {errorMsg && <div class="bg-red-50 text-red-700 p-4 rounded border border-red-200 mb-6 text-sm font-medium">{errorMsg}</div>}
 
-    <div class="bg-white p-4 rounded shadow-sm border border-slate-200 mb-6 flex flex-col md:flex-row gap-4">
-        <div class="relative flex-1">
+    <div class="bg-white p-4 rounded shadow-sm border border-slate-200 mb-6 flex flex-col md:flex-row gap-4 items-center">
+        <div class="relative flex-1 w-full">
             <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">🔍</span>
-            <input type="text" id="searchInput" placeholder="Buscar por Nome, Telefone, Produto, Vendedor ou Status..." class="w-full pl-10 pr-4 py-2 border border-slate-300 rounded outline-none text-sm focus:border-slate-500 transition">
+            {/* Placeholder atualizado para avisar que também pesquisa por segmento */}
+            <input type="text" id="searchInput" placeholder="Buscar por Cliente, Telefone, Segmento, Produto, Vendedor..." class="w-full pl-10 pr-4 py-2 border border-slate-300 rounded outline-none text-sm focus:border-slate-500 transition">
         </div>
-        <select id="sortSelect" class="border border-slate-300 rounded px-3 py-2 bg-slate-50 text-sm cursor-pointer md:w-48 focus:border-slate-500 outline-none">
+        
+        <select id="filterTrafego" class="border border-slate-300 rounded px-3 py-2 bg-slate-50 text-sm cursor-pointer w-full md:w-40 focus:border-slate-500 outline-none">
+            <option value="todos">🌍 Todo o Tráfego</option>
+            <option value="pago">🚀 Apenas Pagos</option>
+            <option value="organico">🌱 Apenas Orgânico</option>
+        </select>
+
+        <select id="sortSelect" class="border border-slate-300 rounded px-3 py-2 bg-slate-50 text-sm cursor-pointer w-full md:w-44 focus:border-slate-500 outline-none">
             <option value="recente">📅 Mais Recentes</option>
             <option value="az">🔤 Ordem A-Z</option>
             <option value="venda">💰 Já Venderam</option>
@@ -95,6 +105,7 @@ try {
                     <th class="px-6 py-3 whitespace-nowrap">Data</th>
                     <th class="px-6 py-3 whitespace-nowrap">Cliente</th>
                     <th class="px-6 py-3 whitespace-nowrap">Telefone</th>
+                    <th class="px-6 py-3 whitespace-nowrap">Segmento</th> {/* Nova Coluna de Cabeçalho */}
                     <th class="px-6 py-3 whitespace-nowrap">Produto</th>
                     <th class="px-6 py-3 whitespace-nowrap">Vendedor</th>
                     <th class="px-6 py-3 whitespace-nowrap text-center">Status Chat</th>
@@ -107,12 +118,28 @@ try {
                         data-nome={String(row.nome).toLowerCase()} 
                         data-date={row.dataDate} 
                         data-venda={row.isVenda}
-                        data-search={String(`${row.nome} ${row.telefone} ${row.produto} ${row.vendedor} ${row.statusGuru}`).toLowerCase()}
+                        data-trafego={row.trafego}
+                        /* Segmento foi adicionado na pesquisa em tempo real */
+                        data-search={String(`${row.nome} ${row.telefone} ${row.segmento} ${row.produto} ${row.vendedor} ${row.statusGuru}`).toLowerCase()}
                     >
-                        {/* A data agora é exibida de forma simples e limpa */}
                         <td class="px-6 py-3 text-slate-500 whitespace-nowrap text-xs font-mono">{row.dataDate}</td>
-                        <td class="px-6 py-3 font-bold text-slate-800 whitespace-nowrap">{row.nome}</td>
+                        <td class="px-6 py-3 font-bold text-slate-800 whitespace-nowrap flex items-center gap-2">
+                            {row.nome}
+                            {row.trafego === 'pago' ? <span class="w-1.5 h-1.5 rounded-full bg-blue-500" title="Tráfego Pago"></span> : <span class="w-1.5 h-1.5 rounded-full bg-emerald-500" title="Orgânico"></span>}
+                        </td>
                         <td class="px-6 py-3 text-slate-600 text-xs whitespace-nowrap font-mono">{row.telefone}</td>
+                        
+                        {/* Nova Coluna Exibindo o Segmento de forma bonita */}
+                        <td class="px-6 py-3">
+                            {row.segmento !== '-' ? (
+                                <span class="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-bold border border-slate-200 whitespace-nowrap">
+                                    {row.segmento}
+                                </span>
+                            ) : (
+                                <span class="text-slate-300">-</span>
+                            )}
+                        </td>
+
                         <td class="px-6 py-3 text-slate-600 text-xs whitespace-nowrap truncate max-w-[150px]">{row.produto}</td>
                         <td class="px-6 py-3 text-slate-500 uppercase text-xs font-bold whitespace-nowrap">{row.vendedor}</td>
                         <td class="px-6 py-3 text-center whitespace-nowrap">
@@ -133,8 +160,8 @@ try {
                     </tr>
                 ))}
                 
-                <tr id="noResults" class="hidden"><td colspan="7" class="px-6 py-12 text-center text-slate-400 text-sm">Nenhum lead encontrado com este filtro.</td></tr>
-                {rows.length === 0 && (<tr><td colspan="7" class="px-6 py-12 text-center text-slate-400 text-sm">A planilha deste mês está vazia.</td></tr>)}
+                <tr id="noResults" class="hidden"><td colspan="8" class="px-6 py-12 text-center text-slate-400 text-sm">Nenhum lead encontrado com este filtro.</td></tr>
+                {rows.length === 0 && (<tr><td colspan="8" class="px-6 py-12 text-center text-slate-400 text-sm">A planilha deste mês está vazia.</td></tr>)}
             </tbody>
         </table>
     </div>
@@ -142,9 +169,9 @@ try {
     <script>
         const searchInput = document.getElementById('searchInput');
         const sortSelect = document.getElementById('sortSelect');
+        const filterTrafego = document.getElementById('filterTrafego');
         const tableBody = document.querySelector('#leadsTable tbody');
         const noResultsMsg = document.getElementById('noResults');
-        
         const rows = Array.from(document.querySelectorAll('.lead-row'));
 
         const removeAccents = (str) => {
@@ -152,60 +179,63 @@ try {
             return String(str).normalize("NFD").replace(/[\u0300-\u036f]/g, "");
         };
 
-        if (searchInput) {
-            searchInput.addEventListener('input', (e) => {
-                const term = removeAccents(e.target.value).toLowerCase().trim();
-                let visibleCount = 0;
+        function applyFilters() {
+            const term = removeAccents(searchInput.value).toLowerCase().trim();
+            const criteria = sortSelect.value;
+            const trafego = filterTrafego.value;
+            let visibleCount = 0;
+
+            rows.forEach(row => {
+                const rawSearch = row.getAttribute('data-search') || "";
+                const text = removeAccents(rawSearch).toLowerCase();
+                const rowTrafego = row.getAttribute('data-trafego');
                 
-                rows.forEach(row => {
-                    const rawSearch = row.getAttribute('data-search') || "";
-                    const text = removeAccents(rawSearch).toLowerCase();
-                    
-                    if (text.includes(term)) { 
-                        row.style.display = ''; 
-                        visibleCount++; 
-                    } else { 
-                        row.style.display = 'none'; 
-                    }
-                });
+                let matches = text.includes(term);
                 
-                if (visibleCount === 0 && rows.length > 0) {
-                    noResultsMsg.classList.remove('hidden');
-                } else {
-                    noResultsMsg.classList.add('hidden');
+                if (trafego !== 'todos' && rowTrafego !== trafego) matches = false;
+
+                if (matches) { 
+                    row.style.display = ''; 
+                    visibleCount++; 
+                } else { 
+                    row.style.display = 'none'; 
                 }
             });
-        }
 
-        if (sortSelect) {
-            sortSelect.addEventListener('change', () => {
-                const criteria = sortSelect.value;
-                rows.sort((a, b) => {
-                    const nomeA = a.getAttribute('data-nome') || '';
-                    const nomeB = b.getAttribute('data-nome') || '';
-                    const dateA = a.getAttribute('data-date') || '';
-                    const dateB = b.getAttribute('data-date') || '';
-                    const vendaA = parseInt(a.getAttribute('data-venda') || '0');
-                    const vendaB = parseInt(b.getAttribute('data-venda') || '0');
+            if (visibleCount === 0 && rows.length > 0) noResultsMsg.classList.remove('hidden');
+            else noResultsMsg.classList.add('hidden');
 
-                    if (criteria === 'az') return nomeA.localeCompare(nomeB);
-                    
-                    if (criteria === 'recente') {
-                        // Como a data agora está sempre em DD/MM/YYYY, o conversor fica super simples e seguro
-                        const parseSortDate = (d) => {
-                            if (!d || d === '-') return '00000000';
-                            const parts = d.split('/');
-                            if (parts.length === 3) return parts[2] + parts[1] + parts[0]; // Retorna YYYYMMDD
-                            return d;
-                        };
-                        return parseSortDate(dateB).localeCompare(parseSortDate(dateA));
-                    }
-                    
-                    if (criteria === 'venda') return vendaB - vendaA;
-                    return 0;
-                });
-                rows.forEach(row => tableBody.insertBefore(row, noResultsMsg));
+            const visibleRows = rows.filter(r => r.style.display !== 'none');
+            
+            visibleRows.sort((a, b) => {
+                const nomeA = a.getAttribute('data-nome') || '';
+                const nomeB = b.getAttribute('data-nome') || '';
+                const dateA = a.getAttribute('data-date') || '';
+                const dateB = b.getAttribute('data-date') || '';
+                const vendaA = parseInt(a.getAttribute('data-venda') || '0');
+                const vendaB = parseInt(b.getAttribute('data-venda') || '0');
+
+                if (criteria === 'az') return nomeA.localeCompare(nomeB);
+                
+                if (criteria === 'recente') {
+                    const parseSortDate = (d) => {
+                        if (!d || d === '-') return '00000000';
+                        const parts = d.split('/');
+                        if (parts.length === 3) return parts[2] + parts[1] + parts[0]; 
+                        return d;
+                    };
+                    return parseSortDate(dateB).localeCompare(parseSortDate(dateA));
+                }
+                
+                if (criteria === 'venda') return vendaB - vendaA;
+                return 0;
             });
+            
+            visibleRows.forEach(row => tableBody.insertBefore(row, noResultsMsg));
         }
+
+        if (searchInput) searchInput.addEventListener('input', applyFilters);
+        if (sortSelect) sortSelect.addEventListener('change', applyFilters);
+        if (filterTrafego) filterTrafego.addEventListener('change', applyFilters);
     </script>
 </Layout>
